@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
+import { AdminPageHeader } from "../../components/AdminPageHeader";
 import { adminApi } from "../../services/adminApi";
+import { confirmAction, wasDeleteCancelled } from "../../utils/confirmDelete";
 
 const STATUSES = ["open", "confirmed", "repaired", "false_positive", "dismissed"];
 
@@ -19,6 +21,7 @@ export function AdminLeaksPage() {
   }, [load]);
 
   async function markRepaired(id) {
+    if (!confirmAction(`Marquer l'incident de fuite #${id} comme repare ?`)) return;
     const notes = notesEdit[id] || "Fuite reparee — intervention terrain terminee";
     try {
       await adminApi.updateLeak(id, { status: "repaired", admin_notes: notes });
@@ -29,6 +32,7 @@ export function AdminLeaksPage() {
   }
 
   async function setStatus(id, status) {
+    if (status === "false_positive" && !confirmAction(`Classer l'incident #${id} en faux positif ?`)) return;
     try {
       await adminApi.updateLeak(id, { status, admin_notes: notesEdit[id] || "" });
       await load();
@@ -38,9 +42,9 @@ export function AdminLeaksPage() {
   }
 
   async function remove(id) {
-    if (!window.confirm("Supprimer cet incident ?")) return;
     try {
-      await adminApi.deleteLeak(id);
+      const res = await adminApi.deleteLeak(id);
+      if (wasDeleteCancelled(res)) return;
       await load();
     } catch (err) {
       setError(err.message);
@@ -49,11 +53,10 @@ export function AdminLeaksPage() {
 
   return (
     <div className="admin-page">
-      <header className="admin-page-header">
-        <div>
-          <h2>Incidents de fuite</h2>
-          <p>Suivi des fuites detectees : confirmer, marquer comme reparees ou classer en faux positif.</p>
-        </div>
+      <AdminPageHeader
+        title="Incidents de fuite"
+        description="Suivi des fuites detectees : confirmer, marquer comme reparees ou classer en faux positif."
+      >
         <select value={filter} onChange={(e) => setFilter(e.target.value)} className="admin-select">
           <option value="">Tous</option>
           {STATUSES.map((s) => (
@@ -62,7 +65,7 @@ export function AdminLeaksPage() {
             </option>
           ))}
         </select>
-      </header>
+      </AdminPageHeader>
       {error ? <p className="error-box">{error}</p> : null}
 
       <section className="card">

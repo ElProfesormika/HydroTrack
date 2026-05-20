@@ -16,6 +16,23 @@
 
 .admin-brand {
   margin-bottom: 20px;
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 14px 12px 12px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
+}
+
+.admin-brand .app-brand-title {
+  color: #0a0a0a;
+}
+
+.admin-brand-sub {
+  display: block;
+  font-size: 0.8rem;
+  color: #94a3b8;
+  margin-top: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 
 .admin-brand strong {
@@ -83,6 +100,11 @@
   align-items: flex-start;
   gap: 16px;
   flex-wrap: wrap;
+}
+
+.admin-page-header.page-header-with-back .page-header__lead {
+  flex: 1;
+  min-width: 200px;
 }
 
 .admin-page-header h2 {
@@ -289,10 +311,49 @@
 
 .admin-login-page {
   min-height: 100vh;
-  display: grid;
-  place-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   background: linear-gradient(135deg, #0c1929, #1e3a5f);
   padding: 24px;
+  position: relative;
+}
+
+.admin-login-top {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+}
+
+.admin-login-top .page-back-btn {
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.admin-login-logos {
+  align-items: center;
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.admin-login-logos .app-brand-logos__images {
+  justify-content: center;
+  width: 100%;
+}
+
+.admin-login-logos .app-brand-title {
+  width: 100%;
+  text-align: center;
+  font-size: 2.1rem;
+  margin-top: 14px;
+}
+
+.admin-login-logos .app-brand-logos__hydro {
+  height: 48px;
+}
+
+.admin-login-logos .app-brand-logos__edf {
+  height: 40px;
 }
 
 .admin-login-card {
@@ -300,8 +361,16 @@
   padding: 28px;
 }
 
-.admin-login-card h2 {
+.admin-login-card h2,
+.admin-login-subtitle {
   margin: 0 0 8px;
+}
+
+.admin-login-subtitle {
+  text-align: center;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--muted);
 }
 
 .admin-field input {
@@ -363,4 +432,82 @@
   margin-top: 8px;
   border: 1px dashed var(--border);
   color: var(--muted);
+}
+
+.admin-form-with-map {
+  display: grid;
+  gap: 16px;
+}
+
+@media (min-width: 960px) {
+  .admin-form-with-map {
+    grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+    align-items: stretch;
+  }
+}
+
+.admin-plan-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.admin-plan-picker-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  font-size: 0.88rem;
+}
+
+.admin-plan-picker-coords {
+  color: #64748b;
+  font-size: 0.85rem;
+}
+
+.admin-plan-picker-coords code {
+  background: #f1f5f9;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: #0f172a;
+}
+
+.admin-plan-picker-map {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #e8eef4;
+  width: 100%;
+}
+
+/* Meme rendu que cartes reseau (edf-plan.jpeg) */
+.admin-plan-picker-map .leaflet-image-layer img {
+  filter: brightness(0.86) contrast(0.72) saturate(0.8);
+  opacity: 0.92;
+}
+
+.admin-plan-picker-map .leaflet-overlay-pane .leaflet-interactive {
+  filter: drop-shadow(0 0 3px rgba(255, 255, 255, 1)) drop-shadow(0 0 8px rgba(255, 255, 255, 0.75))
+    drop-shadow(0 2px 5px rgba(0, 0, 0, 0.55));
+}
+
+.admin-plan-picker-map.map-panel-fill--network {
+  min-height: min(48vh, 640px);
+  max-height: min(88vh, 1100px);
+}
+
+.admin-plan-picker-map .map-leaflet,
+.admin-plan-picker-map .leaflet-container,
+.admin-plan-picker-map .map-leaflet--admin-pick {
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  cursor: crosshair;
+}
+
+.admin-plan-picker-hint {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #64748b;
 }

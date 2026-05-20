@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { hydroApi } from "../services/api";
 
-const WS_URL = "ws://localhost:8000/ws/events";
+function wsEventsUrl() {
+  const envUrl = import.meta.env.VITE_WS_URL;
+  if (envUrl) return envUrl;
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${window.location.host}/ws/events`;
+}
 
 export function useRealtimeDashboard() {
   const [data, setData] = useState({
@@ -16,6 +21,7 @@ export function useRealtimeDashboard() {
     mapZones: [],
     mapAlerts: [],
     mapMeters: [],
+    mapSensors: [],
     sensorsCatalog: [],
     zoneSensors: [],
     leakLocalizations: [],
@@ -43,6 +49,7 @@ export function useRealtimeDashboard() {
         zones,
         mapAlerts,
         meters,
+        mapSensors,
       ] = await Promise.all([
         hydroApi.getOverview(),
         hydroApi.getTimeSeries(),
@@ -58,6 +65,7 @@ export function useRealtimeDashboard() {
         hydroApi.getMapZones(),
         hydroApi.getMapAlerts(),
         hydroApi.getMapMeters(),
+        hydroApi.getMapSensors(),
       ]);
       const meterCandidates = Array.from(
         new Set([
@@ -95,6 +103,7 @@ export function useRealtimeDashboard() {
         mapZones: zones.items || [],
         mapAlerts: mapAlerts.items || [],
         mapMeters: meters.items || [],
+        mapSensors: mapSensors.items || [],
         selectedMeterProfile,
       });
       setError("");
@@ -132,7 +141,7 @@ export function useRealtimeDashboard() {
     let reconnectTimer;
 
     const connect = () => {
-      ws = new WebSocket(WS_URL);
+      ws = new WebSocket(wsEventsUrl());
       ws.onopen = () => {
         setIsConnected(true);
         ws.send("subscribe");

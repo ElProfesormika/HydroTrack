@@ -85,6 +85,7 @@ class NetworkRegistry:
         for seg in network_topology.NETWORK_SEGMENTS:
             for sid in seg["sensor_ids"]:
                 role = "upstream" if sid.endswith("_A") else "downstream"
+                xy = network_topology.SENSOR_PLAN_XY.get(sid, {"x": 500, "y": 500})
                 sensors.append(
                     {
                         "sensor_id": sid,
@@ -92,6 +93,8 @@ class NetworkRegistry:
                         "segment_id": seg["id"],
                         "role": role,
                         "name": sid.replace("_", " "),
+                        "plan_x": xy["x"],
+                        "plan_y": xy["y"],
                         "active": 1,
                         "notes": "",
                     }

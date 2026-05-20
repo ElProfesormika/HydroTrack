@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 
 import { DashboardHeader } from "../components/DashboardHeader";
 import { hydroApi } from "../services/api";
+import { wasDeleteCancelled } from "../utils/confirmDelete";
 
 function toISOFromLocalDatetime(value) {
   if (!value) return "";
@@ -36,7 +37,6 @@ const EMPTY_FORM = {
   meterId: "",
   readingAt: "",
   volume: "",
-  flowRate: "",
   notes: "",
 };
 
@@ -87,7 +87,6 @@ export function RelevesPage() {
       meterId: item.meter_id,
       readingAt: toLocalDatetimeInput(item.timestamp),
       volume: String(item.volume ?? ""),
-      flowRate: String(item.flow_rate ?? ""),
       notes: item.notes || "",
     });
     setStatus("");
@@ -101,14 +100,13 @@ export function RelevesPage() {
     setError("");
 
     const vol = Number(form.volume);
-    const flow = Number(form.flowRate);
     if (!form.meterId) {
       setError("Selectionnez un compteur.");
       setSubmitting(false);
       return;
     }
-    if (Number.isNaN(vol) || vol < 0 || Number.isNaN(flow) || flow < 0) {
-      setError("Volume et debit doivent etre des nombres positifs.");
+    if (Number.isNaN(vol) || vol < 0) {
+      setError("L'index compteur doit etre un nombre positif (m³).");
       setSubmitting(false);
       return;
     }
@@ -117,7 +115,6 @@ export function RelevesPage() {
       timestamp: form.readingAt ? toISOFromLocalDatetime(form.readingAt) : new Date().toISOString(),
       meter_id: form.meterId,
       volume: vol,
-      flow_rate: flow,
       notes: form.notes,
     };
 
@@ -125,14 +122,20 @@ export function RelevesPage() {
       if (editingId) {
         const result = await hydroApi.updateMeterReading(editingId, payload);
         const ml = result.ml || {};
+        const flow = result.reading?.flow_rate;
         setStatus(
-          `Releve #${editingId} modifie — score ML ${ml.anomaly_score ?? "?"} · fuite ~${Math.round((ml.leak_probability ?? 0) * 100)}%`
+          `Releve #${editingId} modifie — index ${vol.toFixed(2)} m³` +
+            (flow != null ? ` · debit calcule ${Number(flow).toFixed(2)} m³/h` : "") +
+            ` · score ML ${ml.anomaly_score ?? "?"} · fuite ~${Math.round((ml.leak_probability ?? 0) * 100)}%`
         );
       } else {
         const result = await hydroApi.createMeterReading(payload);
         const ml = result.ml || {};
+        const flow = result.reading?.flow_rate;
         setStatus(
-          `Nouveau releve enregistre — score ML ${ml.anomaly_score ?? "?"} · fuite ~${Math.round((ml.leak_probability ?? 0) * 100)}%`
+          `Releve enregistre — index ${vol.toFixed(2)} m³` +
+            (flow != null ? ` · debit calcule ${Number(flow).toFixed(2)} m³/h` : "") +
+            ` · score ML ${ml.anomaly_score ?? "?"} · fuite ~${Math.round((ml.leak_probability ?? 0) * 100)}%`
         );
       }
       resetForm();
@@ -143,11 +146,12 @@ export function RelevesPage() {
     setSubmitting(false);
   }
 
-  async function handleDelete(id) {
-    if (!window.confirm("Supprimer ce releve ?")) return;
+  async function handleDelete(id, meterId) {
     setError("");
     try {
-      await hydroApi.deleteMeterReading(id);
+      const label = meterId ? `#${id} — ${meterId}` : `#${id}`;
+      const res = await hydroApi.deleteMeterReading(id, label);
+      if (wasDeleteCancelled(res)) return;
       setStatus(`Releve #${id} supprime.`);
       if (editingId === id) resetForm();
       await loadReadings();
@@ -160,7 +164,7 @@ export function RelevesPage() {
     <div className="page">
       <DashboardHeader
         title="Releves compteurs"
-        description="Saisie, modification et historique des derniers releves manuels (analyse ML automatique a chaque enregistrement)."
+        description="Saisissez l'index affiche sur le compteur (m³) a la date du releve. Le debit est calcule automatiquement par rapport au releve precedent."
         isConnected
         onlineLabel="Pret"
         offlineLabel="Hors ligne"
@@ -173,7 +177,8 @@ export function RelevesPage() {
         <article className="card releves-form-card">
           <h3>{editingId ? `Modifier le releve #${editingId}` : "Nouveau releve"}</h3>
           <p className="map-caption">
-            Les dates saisies sont conservees telles quelles et alimentent les tableaux de bord compteurs.
+            Saisir uniquement la <strong>quantite relevee sur le compteur</strong> (index en m³), comme sur votre
+            fichier CSV. HydroTrack calcule le debit : (index actuel − index precedent) / temps ecoule.
           </p>
           <form className="meter-reading-form" onSubmit={handleSubmit}>
             <label>
@@ -198,24 +203,14 @@ export function RelevesPage() {
               />
             </label>
             <label>
-              Volume (m3)
+              Index compteur (m³)
               <input
                 type="number"
                 min={0}
                 step={0.01}
                 value={form.volume}
                 onChange={(e) => setForm((f) => ({ ...f, volume: e.target.value }))}
-                required
-              />
-            </label>
-            <label>
-              Debit (m3/h)
-              <input
-                type="number"
-                min={0}
-                step={0.01}
-                value={form.flowRate}
-                onChange={(e) => setForm((f) => ({ ...f, flowRate: e.target.value }))}
+                placeholder="Lecture affichee sur le compteur"
                 required
               />
             </label>
@@ -263,8 +258,8 @@ export function RelevesPage() {
                 <tr>
                   <th>Date</th>
                   <th>Compteur</th>
-                  <th>Volume</th>
-                  <th>Debit</th>
+                  <th>Index (m³)</th>
+                  <th>Debit calc.</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -283,14 +278,18 @@ export function RelevesPage() {
                         <strong>{item.meter_id}</strong>
                         {item.notes ? <small>{item.notes}</small> : null}
                       </td>
-                      <td>{Number(item.volume || 0).toFixed(2)} m3</td>
-                      <td>{Number(item.flow_rate || 0).toFixed(2)}</td>
+                      <td>{Number(item.volume || 0).toFixed(2)}</td>
+                      <td>{Number(item.flow_rate || 0).toFixed(2)} m³/h</td>
                       <td>
                         <div className="releves-row-actions">
                           <button type="button" className="btn-link" onClick={() => startEdit(item)}>
                             Modifier
                           </button>
-                          <button type="button" className="btn-link btn-link-danger" onClick={() => handleDelete(item.id)}>
+                          <button
+                            type="button"
+                            className="btn-link btn-link-danger"
+                            onClick={() => handleDelete(item.id, item.meter_id)}
+                          >
                             Supprimer
                           </button>
                         </div>

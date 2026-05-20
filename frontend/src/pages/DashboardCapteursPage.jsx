@@ -11,6 +11,16 @@ export function DashboardCapteursPage() {
     useRealtimeDashboard();
   const sensors = overview?.sensor_kpis || {};
 
+  const zoneCount = sensors.registry_zone_count ?? zoneSensors?.length ?? 0;
+  const deployedCount = sensors.registry_sensor_count ?? zoneCount * 2;
+  const spacingM = Math.round(sensors.zone_spacing_m || 300);
+  const networkKm = ((sensors.network_length_m || 10000) / 1000).toFixed(1);
+
+  const sensorsOnline = (zoneSensors || []).reduce(
+    (n, z) => n + (z.sensors || []).filter((s) => s.status && s.status !== "offline").length,
+    0
+  );
+
   const confirmedLeaks = (leakLocalizations || []).filter((l) => l.confirmed);
   const pendingZones = (zoneSensors || []).filter((z) => z.confirmation_status === "pending").length;
   const confirmedZones = (zoneSensors || []).filter((z) => z.confirmation_status === "confirmed").length;
@@ -25,24 +35,49 @@ export function DashboardCapteursPage() {
     <div className="page">
       <DashboardHeader
         title="Suivi capteurs pression"
-        description="Zones entre compteurs : confirmation de fuite par ondes de pression, puis localisation sur le troncon."
+        description={`Reseau eau potable ~${networkKm} km : ${zoneCount} zones capteurs (~${spacingM} m). Confirmation de fuite par ondes de pression, puis localisation sur le troncon.`}
         isConnected={isConnected}
       />
 
       {error ? <p className="error-box">{error}</p> : null}
 
       <section className="kpi-grid">
-        <KpiCard title="Points capteurs" value={sensors.total_points || 0} subtitle="Mesures pression" />
-        <KpiCard title="Capteurs deployes" value={26} subtitle="2 par zone x 13 zones" />
-        <KpiCard title="Zones actives" value={sensors.distinct_zones || 13} subtitle="Troncons instrumentes" />
+        <KpiCard
+          title="Points capteurs"
+          value={sensors.total_points || 0}
+          subtitle="Mesures pression enregistrees"
+        />
+        <KpiCard
+          title="Capteurs deployes"
+          value={deployedCount}
+          subtitle={`2 par zone × ${zoneCount} zones`}
+        />
+        <KpiCard
+          title="Capteurs en ligne"
+          value={sensorsOnline}
+          subtitle={`Sur ${deployedCount} deployes`}
+        />
+        <KpiCard
+          title="Zones actives"
+          value={zoneCount}
+          subtitle={`Troncons instrumentes (~${spacingM} m)`}
+        />
         <KpiCard title="Zones en analyse" value={pendingZones} subtitle="Confirmation en cours" />
         <KpiCard title="Fuites confirmees" value={confirmedZones} subtitle="Capteurs + compteur" />
         <KpiCard title="Localisations" value={confirmedLeaks.length} subtitle="Distance estimee" />
-        <KpiCard title="Intensite moyenne" value={Number(sensors.avg_intensity || 0).toFixed(2)} subtitle="Signal" />
-        <KpiCard title="Intensite max" value={Number(sensors.max_intensity || 0).toFixed(2)} subtitle="Pic observe" />
+        <KpiCard
+          title="Intensite moyenne"
+          value={Number(sensors.avg_intensity || 0).toFixed(2)}
+          subtitle="Signal (mesures recues)"
+        />
+        <KpiCard
+          title="Intensite max"
+          value={Number(sensors.max_intensity || 0).toFixed(2)}
+          subtitle="Pic observe"
+        />
       </section>
 
-      <SensorZonesPanel zones={zoneSensors} />
+      <SensorZonesPanel zones={zoneSensors} networkKm={networkKm} zoneSpacingM={spacingM} />
 
       <PressureIntensityChart series={pressureSeries} />
 
@@ -58,12 +93,11 @@ export function DashboardCapteursPage() {
               <strong>1. Compteur</strong> — Le ML signale une anomalie sur un troncon (probabilite de fuite).
             </li>
             <li>
-              <strong>2. Zone</strong> — Les capteurs pression de la zone adjacente analysent le signal et la
+              <strong>2. Zone</strong> — Les 2 capteurs pression de la zone (~{spacingM} m) analysent le signal et la
               correlation inter-capteurs.
             </li>
             <li>
-              <strong>3. Confirmation</strong> — Fuite confirmee si compteur + pression + correlation sont
-              coherents.
+              <strong>3. Confirmation</strong> — Fuite confirmee si compteur + pression + correlation sont coherents.
             </li>
             <li>
               <strong>4. Localisation</strong> — Distance estimee depuis le compteur amont (modele temps de transit /

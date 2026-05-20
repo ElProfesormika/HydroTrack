@@ -12,10 +12,11 @@ class MeterDataIn(BaseModel):
 
 
 class MeterReadingIn(BaseModel):
+    """Releve manuel : index compteur (m3) a la date indiquee. Le debit est calcule cote serveur."""
+
     timestamp: datetime
     meter_id: str = Field(min_length=1)
-    volume: float = Field(ge=0)
-    flow_rate: float = Field(ge=0)
+    volume: float = Field(ge=0, description="Index compteur en m3 a la date du releve")
     notes: str = ""
 
 
@@ -23,7 +24,6 @@ class MeterReadingUpdate(BaseModel):
     timestamp: datetime | None = None
     meter_id: str | None = None
     volume: float | None = Field(default=None, ge=0)
-    flow_rate: float | None = Field(default=None, ge=0)
     notes: str | None = None
 
 
@@ -114,6 +114,8 @@ class AdminSensorIn(BaseModel):
     segment_id: str | None = None
     role: str = "upstream"
     name: str = Field(min_length=1)
+    plan_x: float | None = None
+    plan_y: float | None = None
     active: bool = True
     notes: str = ""
 
@@ -123,6 +125,8 @@ class AdminSensorUpdate(BaseModel):
     segment_id: str | None = None
     role: str | None = None
     name: str | None = None
+    plan_x: float | None = None
+    plan_y: float | None = None
     active: bool | None = None
     notes: str | None = None
 

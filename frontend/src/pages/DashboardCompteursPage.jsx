@@ -12,6 +12,7 @@ import { MetersTrendChart } from "../components/MetersTrendChart";
 import { TopMetersBarChart } from "../components/TopMetersBarChart";
 import { VariationChart } from "../components/VariationChart";
 import { useRealtimeDashboard } from "../hooks/useRealtimeDashboard";
+import { formatFlowM3h, formatVolumeM3 } from "../utils/formatUnits";
 
 export function DashboardCompteursPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -22,7 +23,6 @@ export function DashboardCompteursPage() {
     timeseries,
     meterFlowSeries,
     meterFlowPerMeter,
-    anomalies,
     alerts,
     mapMeters,
     selectedMeterId,
@@ -71,7 +71,7 @@ export function DashboardCompteursPage() {
       <article className="card releves-promo-card">
         <h3>Saisie des releves</h3>
         <p className="map-caption">
-          Ajoutez ou modifiez les releves manuels sur la page dediee (historique des 10 derniers enregistrements).
+          Saisissez l&apos;index compteur (m³) a la date du releve — le debit est calcule automatiquement.
         </p>
         <Link to="/releves" className="btn-primary releves-promo-link">
           Ouvrir la page Releves
@@ -81,9 +81,10 @@ export function DashboardCompteursPage() {
       <section className="kpi-grid">
         <KpiCard title="Compteurs distincts" value={meter.distinct_meters || 0} subtitle="Identifiants actifs" />
         <KpiCard title="Points télémetrie" value={meter.total_points || 0} subtitle="Mesures enregistrées" />
-        <KpiCard title="Débit moyen" value={Number(meter.avg_flow || 0).toFixed(2)} subtitle="Réseau" />
-        <KpiCard title="Débit max observé" value={Number(meter.max_flow || 0).toFixed(2)} subtitle="Pic" />
-        <KpiCard title="Volume cumulé" value={Number(meter.total_volume || 0).toFixed(2)} subtitle="m³" />
+        <KpiCard title="Debit moyen (typique)" value={formatFlowM3h(meter.avg_flow)} subtitle="Mediane par compteur (m³/h)" />
+        <KpiCard title="Debit sources SEP" value={formatFlowM3h(meter.sep_sources_flow)} subtitle="6 compteurs CSV (m³/h)" />
+        <KpiCard title="Debit max (filtre)" value={formatFlowM3h(meter.max_flow)} subtitle="Hors pics aberrants" />
+        <KpiCard title="Volume SEP" value={formatVolumeM3(meter.sep_total_volume)} subtitle="6 sources, periode (m³)" />
       </section>
 
       <section className="split-grid charts-two-debit">
@@ -104,24 +105,13 @@ export function DashboardCompteursPage() {
       <VariationChart timeseries={timeseries} />
 
       <section className="split-grid">
-        <EventList title="Dernières alertes (gravité codée)" items={alerts} mode="alerts" />
-        <InsightCard title="Cohérence de detection ML">
+        <EventList title="Alertes compteurs" items={alerts} mode="alerts" />
+        <InsightCard title="Lien avec la detection ML">
           <p className="map-caption">
-            Meme logique de classification pour tous les compteurs : IsolationForest (n=300), score d'anomalie et seuils
-            de gravite en 4 niveaux.
+            Chaque releve d&apos;index declenche le modele (IsolationForest). Scores, probabilites de fuite et
+            classement des compteurs : page{" "}
+            <Link to="/dashboard/detection">Detection ML</Link>.
           </p>
-          <ul className="event-list event-list--compact">
-            {anomalies.slice(0, 8).map((item, idx) => (
-              <li key={`meter-anom-${idx}-${item.timestamp || "na"}`}>
-                <strong>{item.meter_id || "N/A"}</strong>
-                <p>
-                  {new Date(item.timestamp).toLocaleString("fr-FR")} - score {Number(item.score || 0).toFixed(2)} /
-                  fuite {Math.round(Number(item.leak_probability || 0) * 100)}%
-                </p>
-              </li>
-            ))}
-            {!anomalies.length ? <li>Aucune anomalie recente.</li> : null}
-          </ul>
         </InsightCard>
       </section>
     </div>

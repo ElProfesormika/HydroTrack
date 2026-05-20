@@ -118,7 +118,8 @@ def seed_from_csv(csv_path: Path, reset: bool, max_points: int) -> dict[str, int
 
         hours = 168.0
         if prev_ts is not None:
-            hours = max((timestamp - prev_ts).total_seconds() / 3600.0, 1.0 / 60.0)
+            # Minimum 1 h entre releves pour eviter des debits aberrants (m3/h = deltaV / dt)
+            hours = max((timestamp - prev_ts).total_seconds() / 3600.0, 1.0)
         prev_ts = timestamp
 
         row_deltas: list[tuple[str, float]] = []
@@ -151,7 +152,7 @@ def seed_from_csv(csv_path: Path, reset: bool, max_points: int) -> dict[str, int
                     timestamp=timestamp,
                     meter_id=meter_id,
                     volume=round(target_volume[meter_id], 4),
-                    flow_rate=round(delta / hours, 4),
+                    flow_rate=round(min(delta / hours, 2000.0), 4),
                 )
             )
 
@@ -165,7 +166,7 @@ def seed_from_csv(csv_path: Path, reset: bool, max_points: int) -> dict[str, int
                     timestamp=timestamp,
                     meter_id=meter_id,
                     volume=round(target_volume[meter_id], 4),
-                    flow_rate=round(share / hours, 4),
+                    flow_rate=round(min(share / hours, 2000.0), 4),
                 )
             )
 

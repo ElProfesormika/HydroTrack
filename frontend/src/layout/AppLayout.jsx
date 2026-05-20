@@ -1,11 +1,14 @@
 import { NavLink } from "react-router-dom";
+import { AppBrandLogos } from "../components/AppBrandLogos";
 
 export function AppLayout({ children }) {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <h1>HydroTrack</h1>
-        <p>Surveillance reseau eau - EDF CNPE</p>
+        <div className="sidebar-brand">
+          <AppBrandLogos />
+          <p className="sidebar-tagline">Surveillance reseau eau — CNPE</p>
+        </div>
         <nav>
           <div className="nav-section-label">Tableaux de bord</div>
           <NavLink to="/dashboard" end className={({ isActive }) => (isActive ? "active" : "")}>

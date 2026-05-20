@@ -1,4 +1,10 @@
-const API_BASE = "http://localhost:8000";
+import {
+  inferDeleteConfirm,
+  requireDeleteConfirmation,
+  requireDeleteConfirmationForPath,
+} from "../utils/confirmDelete";
+
+const API_BASE = (import.meta.env.VITE_API_BASE || "").replace(/\/$/, "");
 const KEY_STORAGE = "hydrotrack_admin_key";
 
 export function getAdminKey() {
@@ -13,14 +19,35 @@ export function clearAdminKey() {
   sessionStorage.removeItem(KEY_STORAGE);
 }
 
+/**
+ * DELETE admin avec confirmation obligatoire.
+ * Utiliser cette fonction ou adminApi.delete() pour tout nouvel enregistrement admin.
+ */
+export async function adminDelete(path, confirm) {
+  const opts =
+    confirm && (confirm.entityLabel || confirm.idOrName != null)
+      ? { ...inferDeleteConfirm(path, confirm.hard), ...confirm }
+      : inferDeleteConfirm(path, confirm?.hard);
+  if (!requireDeleteConfirmation(opts)) return null;
+  return adminRequest(path, { method: "DELETE", _deleteConfirmed: true });
+}
+
 async function adminRequest(path, options = {}) {
+  const method = (options.method || "GET").toUpperCase();
+
+  if (method === "DELETE" && !options._deleteConfirmed) {
+    const overrides = options.deleteConfirm || {};
+    if (!requireDeleteConfirmationForPath(path, overrides)) return null;
+  }
+
+  const { deleteConfirm: _dc, _deleteConfirmed: _dc2, ...fetchOptions } = options;
   const key = getAdminKey();
   const headers = {
     "Content-Type": "application/json",
     "X-Admin-Key": key,
-    ...(options.headers || {}),
+    ...(fetchOptions.headers || {}),
   };
-  const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  const response = await fetch(`${API_BASE}${path}`, { ...fetchOptions, method, headers });
   if (response.status === 401) {
     clearAdminKey();
     throw new Error("Session admin expiree — reconnectez-vous");
@@ -60,15 +87,23 @@ export const adminApi = {
   updateMeter: (id, body) =>
     adminRequest(`/api/admin/meters/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(body) }),
   deleteMeter: (id, hard = false) =>
-    adminRequest(`/api/admin/meters/${encodeURIComponent(id)}?hard=${hard}`, { method: "DELETE" }),
+    adminDelete(`/api/admin/meters/${encodeURIComponent(id)}?hard=${hard}`, {
+      entityLabel: "le compteur",
+      idOrName: id,
+      hard,
+    }),
 
   listZones: (includeInactive = true) =>
     adminRequest(`/api/admin/zones?include_inactive=${includeInactive}`),
   createZone: (body) => adminRequest("/api/admin/zones", { method: "POST", body: JSON.stringify(body) }),
   updateZone: (id, body) =>
     adminRequest(`/api/admin/zones/${id}`, { method: "PUT", body: JSON.stringify(body) }),
-  deleteZone: (id, hard = false) =>
-    adminRequest(`/api/admin/zones/${id}?hard=${hard}`, { method: "DELETE" }),
+  deleteZone: (id, hard = false, displayName) =>
+    adminDelete(`/api/admin/zones/${id}?hard=${hard}`, {
+      entityLabel: "la zone",
+      idOrName: displayName || String(id),
+      hard,
+    }),
 
   listSensors: (includeInactive = true) =>
     adminRequest(`/api/admin/sensors?include_inactive=${includeInactive}`),
@@ -76,11 +111,21 @@ export const adminApi = {
   updateSensor: (id, body) =>
     adminRequest(`/api/admin/sensors/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(body) }),
   deleteSensor: (id, hard = false) =>
-    adminRequest(`/api/admin/sensors/${encodeURIComponent(id)}?hard=${hard}`, { method: "DELETE" }),
+    adminDelete(`/api/admin/sensors/${encodeURIComponent(id)}?hard=${hard}`, {
+      entityLabel: "le capteur",
+      idOrName: id,
+      hard,
+    }),
 
   listSegments: () => adminRequest("/api/admin/segments"),
   updateSegment: (id, body) =>
     adminRequest(`/api/admin/segments/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(body) }),
+  deleteSegment: (id, displayName) =>
+    adminDelete(`/api/admin/segments/${encodeURIComponent(id)}`, {
+      entityLabel: "le troncon",
+      idOrName: displayName || id,
+      hard: true,
+    }),
 
   listAlerts: (limit = 100, status) => {
     const params = new URLSearchParams({ limit: String(limit) });
@@ -89,7 +134,12 @@ export const adminApi = {
   },
   updateAlert: (id, body) =>
     adminRequest(`/api/admin/alerts/${id}`, { method: "PUT", body: JSON.stringify(body) }),
-  deleteAlert: (id) => adminRequest(`/api/admin/alerts/${id}`, { method: "DELETE" }),
+  deleteAlert: (id) =>
+    adminDelete(`/api/admin/alerts/${id}`, {
+      entityLabel: "l'alerte",
+      idOrName: `#${id}`,
+      hard: true,
+    }),
 
   listLeaks: (limit = 50, status) => {
     const params = new URLSearchParams({ limit: String(limit) });
@@ -98,5 +148,13 @@ export const adminApi = {
   },
   updateLeak: (id, body) =>
     adminRequest(`/api/admin/leaks/${id}`, { method: "PUT", body: JSON.stringify(body) }),
-  deleteLeak: (id) => adminRequest(`/api/admin/leaks/${id}`, { method: "DELETE" }),
+  deleteLeak: (id) =>
+    adminDelete(`/api/admin/leaks/${id}`, {
+      entityLabel: "l'incident de fuite",
+      idOrName: `#${id}`,
+      hard: true,
+    }),
+
+  /** Suppression generique — confirmation automatique (futurs enregistrements admin). */
+  delete: (path, confirm) => adminDelete(path, confirm),
 };

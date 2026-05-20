@@ -42,17 +42,125 @@ body {
   box-shadow: var(--shadow);
 }
 
-.sidebar h1 {
-  margin: 0;
-  color: var(--text-strong);
-  font-size: 1.45rem;
-  letter-spacing: -0.02em;
+.sidebar-brand {
+  margin-bottom: 4px;
 }
 
-.sidebar > p {
+.sidebar-tagline {
   color: var(--muted-soft);
+  font-size: 0.82rem;
+  margin: 10px 0 0;
+  line-height: 1.35;
+}
+
+.app-brand-logos {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+}
+
+.app-brand-logos__images {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.app-brand-logos__hydro {
+  height: 44px;
+  width: auto;
+  max-width: 140px;
+  object-fit: contain;
+}
+
+.app-brand-logos__edf {
+  height: 36px;
+  width: auto;
+  max-width: 72px;
+  object-fit: contain;
+}
+
+.app-brand-title {
+  margin: 12px 0 0;
+  padding: 0;
+  font-size: 1.85rem;
+  font-weight: 800;
+  color: #0a0a0a;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+}
+
+.app-brand-logos--compact .app-brand-logos__hydro {
+  height: 36px;
+  max-width: 120px;
+}
+
+.app-brand-logos--compact .app-brand-logos__edf {
+  height: 30px;
+  max-width: 60px;
+}
+
+.app-brand-logos--compact .app-brand-title {
+  font-size: 1.5rem;
+}
+
+.page-header-with-back .page-header__lead {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  flex: 1;
+  min-width: 0;
+}
+
+.page-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.page-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-top: 4px;
+  padding: 6px 12px 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--accent);
+  text-decoration: none;
   font-size: 0.88rem;
-  margin: 8px 0 0;
+  font-weight: 600;
+  box-shadow: var(--shadow);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.page-back-btn:hover {
+  background: var(--accent-light);
+  border-color: var(--accent);
+  color: var(--text-strong);
+}
+
+.page-back-btn__icon {
+  font-size: 1.15rem;
+  line-height: 1;
+}
+
+.page-back-btn__label {
+  line-height: 1.2;
+}
+
+@media (max-width: 560px) {
+  .page-back-btn__label {
+    display: none;
+  }
+  .page-back-btn {
+    padding: 8px 10px;
+  }
 }
 
 .sidebar nav {
@@ -159,7 +267,7 @@ body {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 16px;
-  align-items: start;
+  align-items: stretch;
   overflow: visible;
 }
 
@@ -182,11 +290,39 @@ body {
   outline: 1px solid var(--border);
 }
 
+/* Cartes reseau (page Cartographie) : cadre plus grand, plan en mode cover */
+.map-panel-fill--network {
+  aspect-ratio: 1018 / 880;
+  width: 100%;
+  min-height: min(52vh, 720px);
+  max-height: min(94vh, 1280px);
+}
+
+.maps-two .map-panel-fill--network {
+  min-height: min(56vh, 780px);
+}
+
 .map-panel-fill .map-leaflet,
 .map-panel-fill .leaflet-container {
   width: 100% !important;
   height: 100% !important;
   min-height: 0 !important;
+}
+
+.map-panel-fill--network .leaflet-container {
+  background: #e8eef4;
+}
+
+/* Plan site EDF (edf-plan.jpeg) : luminosite baissee, contraste adouci — points plus lisibles */
+.map-panel-fill .leaflet-image-layer img {
+  filter: brightness(0.86) contrast(0.72) saturate(0.8);
+  opacity: 0.92;
+}
+
+/* Points compteurs / capteurs : halo lumineux pour ressortir sur le plan */
+.map-panel-fill .leaflet-overlay-pane .leaflet-interactive {
+  filter: drop-shadow(0 0 3px rgba(255, 255, 255, 1)) drop-shadow(0 0 8px rgba(255, 255, 255, 0.75))
+    drop-shadow(0 2px 5px rgba(0, 0, 0, 0.55));
 }
 
 .map-leaflet--meters .leaflet-interactive {
@@ -230,6 +366,22 @@ body {
   margin-right: 6px;
   vertical-align: middle;
   border: 1px solid rgba(0, 0, 0, 0.15);
+}
+
+.map-risk-legend--stacked {
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.detection-top-meter {
+  margin-top: 8px;
+  margin-bottom: 0;
+}
+
+.detection-footer-hint {
+  margin-top: 16px;
+  text-align: center;
 }
 
 .map-floating-tooltip {
@@ -295,6 +447,11 @@ body {
 .map-tooltip-risk--critical {
   background: rgba(229, 57, 53, 0.22);
   color: #c62828;
+}
+
+.map-tooltip-risk--offline {
+  background: rgba(176, 190, 197, 0.35);
+  color: #546e7a;
 }
 
 .map-tooltip-meta {
@@ -657,6 +814,34 @@ body {
   margin: 12px 0 0;
   font-size: 0.9rem;
   color: var(--ok);
+}
+
+.meter-reading-recent {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.meter-reading-recent h4 {
+  margin: 0 0 8px;
+  font-size: 0.92rem;
+  color: var(--text-strong);
+}
+
+.meter-reading-recent-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+}
+
+.meter-reading-recent-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+  font-size: 0.88rem;
+  border-bottom: 1px solid var(--border);
 }
 
 .event-item {

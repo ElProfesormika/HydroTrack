@@ -1,41 +1,96 @@
-const API_BASE = "http://localhost:8000";
+import { inferDeleteConfirm, requireDeleteConfirmation } from "../utils/confirmDelete";
+
+/** Base API : vide en dev (proxy Vite) ou VITE_API_BASE en production */
+const API_BASE = (import.meta.env.VITE_API_BASE || "").replace(/\/$/, "");
+
+function networkError(path, cause) {
+  const hint =
+    "Verifiez que le backend est demarre (port 8000) : cd backend && .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000";
+  return new Error(`Connexion impossible vers ${path}. ${hint}`, { cause });
+}
 
 async function request(path) {
-  const response = await fetch(`${API_BASE}${path}`);
+  let response;
+  try {
+    response = await fetch(`${API_BASE}${path}`);
+  } catch (err) {
+    throw networkError(path, err);
+  }
   if (!response.ok) {
-    throw new Error(`Erreur API ${response.status} sur ${path}`);
+    const text = await response.text().catch(() => "");
+    throw new Error(`Erreur API ${response.status} sur ${path}${text ? ` : ${text}` : ""}`);
   }
   return response.json();
 }
 
 async function requestPost(path, body) {
-  const response = await fetch(`${API_BASE}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  let response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    throw networkError(path, err);
+  }
   if (!response.ok) {
     const text = await response.text().catch(() => "");
-    throw new Error(`Erreur API ${response.status} sur ${path} ${text}`.trim());
+    let detail = text;
+    try {
+      const json = JSON.parse(text);
+      detail = json.detail || text;
+    } catch {
+      /* keep raw text */
+    }
+    throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
   }
   return response.json();
 }
 
 async function requestPut(path, body) {
-  const response = await fetch(`${API_BASE}${path}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  let response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    throw networkError(path, err);
+  }
   if (!response.ok) {
     const text = await response.text().catch(() => "");
-    throw new Error(`Erreur API ${response.status} sur ${path} ${text}`.trim());
+    let detail = text;
+    try {
+      const json = JSON.parse(text);
+      detail = json.detail || text;
+    } catch {
+      /* keep raw text */
+    }
+    throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
   }
   return response.json();
 }
 
-async function requestDelete(path) {
-  const response = await fetch(`${API_BASE}${path}`, { method: "DELETE" });
+/**
+ * DELETE avec confirmation obligatoire (y compris futurs enregistrements).
+ * @param {string} path
+ * @param {{ entityLabel?: string, idOrName?: string, hard?: boolean }} [confirm] — optionnel ; infere depuis path si absent
+ */
+async function requestDelete(path, confirm) {
+  const opts =
+    confirm && (confirm.entityLabel || confirm.idOrName != null)
+      ? { ...inferDeleteConfirm(path, confirm.hard), ...confirm }
+      : inferDeleteConfirm(path, confirm?.hard);
+  if (!requireDeleteConfirmation(opts)) return null;
+
+  let response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, { method: "DELETE" });
+  } catch (err) {
+    throw networkError(path, err);
+  }
   if (!response.ok) {
     const text = await response.text().catch(() => "");
     throw new Error(`Erreur API ${response.status} sur ${path} ${text}`.trim());
@@ -66,7 +121,14 @@ export const hydroApi = {
   getMeterReading: (id) => request(`/api/meter-readings/${id}`),
   createMeterReading: (payload) => requestPost("/api/meter-readings", payload),
   updateMeterReading: (id, payload) => requestPut(`/api/meter-readings/${id}`, payload),
-  deleteMeterReading: (id) => requestDelete(`/api/meter-readings/${id}`),
+  deleteMeterReading: (id, displayName) =>
+    requestDelete(`/api/meter-readings/${id}`, {
+      entityLabel: "le releve",
+      idOrName: displayName || `#${id}`,
+      hard: true,
+    }),
+  /** Suppression generique — confirmation automatique (futurs enregistrements utilisateurs). */
+  delete: (path, confirm) => requestDelete(path, confirm),
   getPressureSeries: (bucketMinutes = 60, points = 24) =>
     request(`/api/dashboard/pressure-series?bucket_minutes=${bucketMinutes}&points=${points}`),
   getAlertStats: () => request("/api/dashboard/alert-stats"),
@@ -84,4 +146,7 @@ export const hydroApi = {
   getMapZones: () => request("/api/map/zones"),
   getMapAlerts: (limit = 40) => request(`/api/map/alerts?limit=${limit}`),
   getMapMeters: () => request("/api/map/meters"),
+  getMapSensors: () => request("/api/map/sensors"),
 };
+
+export { requestDelete };

@@ -1,42 +1,74 @@
 import { useCallback, useEffect, useState } from "react";
 import { adminApi } from "../../services/adminApi";
+import { AdminPageHeader } from "../../components/AdminPageHeader";
+import { AdminPlanPicker, pointsFromMeters, pointsFromZones } from "../../components/admin/AdminPlanPicker";
+import { wasDeleteCancelled } from "../../utils/confirmDelete";
+
+const EMPTY_ZONE = {
+  zone_id: "",
+  name: "",
+  short_name: "",
+  plan_x: "",
+  plan_y: "",
+  active: true,
+};
 
 export function AdminZonesPage() {
   const [zones, setZones] = useState([]);
+  const [meters, setMeters] = useState([]);
   const [segments, setSegments] = useState([]);
   const [error, setError] = useState("");
-  const [zoneForm, setZoneForm] = useState({
-    zone_id: "",
-    name: "",
-    short_name: "",
-    plan_x: "",
-    plan_y: "",
-    active: true,
-  });
+  const [zoneForm, setZoneForm] = useState(EMPTY_ZONE);
   const [segEdit, setSegEdit] = useState(null);
 
   const load = useCallback(async () => {
-    const [z, s] = await Promise.all([adminApi.listZones(true), adminApi.listSegments()]);
+    const [z, s, m] = await Promise.all([
+      adminApi.listZones(true),
+      adminApi.listSegments(),
+      adminApi.listMeters(true),
+    ]);
     setZones(z.items || []);
     setSegments(s.items || []);
+    setMeters(m.items || []);
   }, []);
 
   useEffect(() => {
     load().catch((e) => setError(e.message));
   }, [load]);
 
+  function setPlanCoords(x, y) {
+    setZoneForm((f) => ({ ...f, plan_x: x, plan_y: y }));
+  }
+
   async function saveZone(e) {
     e.preventDefault();
+    if (zoneForm.plan_x === "" || zoneForm.plan_y === "") {
+      setError("Cliquez sur le plan pour definir la position de la zone.");
+      return;
+    }
     try {
+      setError("");
       await adminApi.createZone({
         zone_id: Number(zoneForm.zone_id),
         name: zoneForm.name,
         short_name: zoneForm.short_name,
-        plan_x: zoneForm.plan_x === "" ? null : Number(zoneForm.plan_x),
-        plan_y: zoneForm.plan_y === "" ? null : Number(zoneForm.plan_y),
+        plan_x: Number(zoneForm.plan_x),
+        plan_y: Number(zoneForm.plan_y),
         active: zoneForm.active,
       });
-      setZoneForm({ zone_id: "", name: "", short_name: "", plan_x: "", plan_y: "", active: true });
+      setZoneForm(EMPTY_ZONE);
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function removeZone(zoneId, hard = false) {
+    const label = zones.find((z) => z.zone_id === zoneId)?.name || `zone ${zoneId}`;
+    try {
+      setError("");
+      const res = await adminApi.deleteZone(zoneId, hard, label);
+      if (wasDeleteCancelled(res)) return;
       await load();
     } catch (err) {
       setError(err.message);
@@ -63,38 +95,51 @@ export function AdminZonesPage() {
 
   return (
     <div className="admin-page">
-      <header className="admin-page-header">
-        <div>
-          <h2>Zones & troncons</h2>
-          <p>Zones capteurs entre compteurs et longueur des troncons pour la localisation.</p>
-        </div>
-      </header>
+      <AdminPageHeader
+        title="Zones & troncons"
+        description="Placez la zone sur le plan capteurs (~300 m entre points), puis renseignez l'identifiant et le nom."
+      />
       {error ? <p className="error-box">{error}</p> : null}
 
       <section className="card admin-form-card">
         <h3>Nouvelle zone</h3>
-        <form className="admin-form-grid" onSubmit={saveZone}>
-          <label>
-            ID zone
-            <input value={zoneForm.zone_id} onChange={(e) => setZoneForm({ ...zoneForm, zone_id: e.target.value })} required />
-          </label>
-          <label>
-            Nom
-            <input value={zoneForm.name} onChange={(e) => setZoneForm({ ...zoneForm, name: e.target.value })} required />
-          </label>
-          <label>
-            Nom court
-            <input value={zoneForm.short_name} onChange={(e) => setZoneForm({ ...zoneForm, short_name: e.target.value })} />
-          </label>
-          <label>
-            Plan X
-            <input value={zoneForm.plan_x} onChange={(e) => setZoneForm({ ...zoneForm, plan_x: e.target.value })} />
-          </label>
-          <div className="admin-form-actions">
-            <button type="submit" className="btn-primary">
-              Creer zone
-            </button>
+        <form onSubmit={saveZone} className="admin-form-with-map">
+          <div className="admin-form-grid">
+            <label>
+              ID zone
+              <input
+                type="number"
+                min={1}
+                value={zoneForm.zone_id}
+                onChange={(e) => setZoneForm({ ...zoneForm, zone_id: e.target.value })}
+                required
+              />
+            </label>
+            <label>
+              Nom
+              <input value={zoneForm.name} onChange={(e) => setZoneForm({ ...zoneForm, name: e.target.value })} required />
+            </label>
+            <label>
+              Nom court
+              <input
+                value={zoneForm.short_name}
+                onChange={(e) => setZoneForm({ ...zoneForm, short_name: e.target.value })}
+              />
+            </label>
+            <div className="admin-form-actions admin-form-full">
+              <button type="submit" className="btn-primary">
+                Creer zone
+              </button>
+            </div>
           </div>
+          <AdminPlanPicker
+            variant="sensors"
+            planX={zoneForm.plan_x}
+            planY={zoneForm.plan_y}
+            onChange={setPlanCoords}
+            existingPoints={[...pointsFromZones(zones), ...pointsFromMeters(meters)]}
+            title="Cliquez pour placer la zone"
+          />
         </form>
       </section>
 
@@ -158,7 +203,11 @@ export function AdminZonesPage() {
                   </td>
                   <td>{row.length_m}</td>
                   <td>
-                    <button type="button" className="btn-ghost btn-sm" onClick={() => setSegEdit({ ...row, notes: row.notes || "" })}>
+                    <button
+                      type="button"
+                      className="btn-ghost btn-sm"
+                      onClick={() => setSegEdit({ ...row, notes: row.notes || "" })}
+                    >
                       Modifier
                     </button>
                   </td>
@@ -177,7 +226,9 @@ export function AdminZonesPage() {
               <tr>
                 <th>ID</th>
                 <th>Nom</th>
+                <th>Plan</th>
                 <th>Actif</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -185,7 +236,18 @@ export function AdminZonesPage() {
                 <tr key={z.zone_id}>
                   <td>{z.zone_id}</td>
                   <td>{z.name}</td>
+                  <td>
+                    {z.plan_x != null ? `${Number(z.plan_x).toFixed(0)}, ${Number(z.plan_y).toFixed(0)}` : "—"}
+                  </td>
                   <td>{z.active ? "Oui" : "Non"}</td>
+                  <td className="admin-row-actions">
+                    <button type="button" className="btn-ghost btn-sm" onClick={() => removeZone(z.zone_id, false)}>
+                      Desactiver
+                    </button>
+                    <button type="button" className="btn-danger btn-sm" onClick={() => removeZone(z.zone_id, true)}>
+                      Suppr.
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>

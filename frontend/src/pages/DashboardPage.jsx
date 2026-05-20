@@ -4,6 +4,7 @@ import { InsightCard } from "../components/InsightCard";
 import { KpiCard } from "../components/KpiCard";
 import { VariationChart } from "../components/VariationChart";
 import { useRealtimeDashboard } from "../hooks/useRealtimeDashboard";
+import { formatFlowM3h, formatVolumeM3 } from "../utils/formatUnits";
 
 export function DashboardPage() {
   const { overview, timeseries, alerts, anomalies, mapMeters, sensorsCatalog, isConnected, error } =
@@ -28,10 +29,31 @@ export function DashboardPage() {
       <section className="kpi-grid">
         <KpiCard title="Compteurs suivis" value={meter.distinct_meters || 0} subtitle="Identifiants uniques" />
         <KpiCard title="Points compteurs" value={meter.total_points || 0} subtitle="Volume de telemetrie" />
-        <KpiCard title="Debit moyen" value={Number(meter.avg_flow || 0).toFixed(2)} subtitle="m3/h (estime)" />
-        <KpiCard title="Volume cumule" value={Number(meter.total_volume || 0).toFixed(2)} subtitle="m3" />
-        <KpiCard title="Capteurs pression" value={sensors.distinct_sensors || 0} subtitle="Capteurs uniques" />
-        <KpiCard title="Zones instrumentees" value={sensors.distinct_zones || 0} subtitle="Couverture capteurs" />
+        <KpiCard
+          title="Debit moyen (typique)"
+          value={formatFlowM3h(meter.avg_flow)}
+          subtitle="Mediane des debits moyens par compteur (m³/h)"
+        />
+        <KpiCard
+          title="Debit sources SEP"
+          value={formatFlowM3h(meter.sep_sources_flow)}
+          subtitle="Somme des 6 compteurs alimentes par le CSV SEP (m³/h)"
+        />
+        <KpiCard
+          title="Volume consomme (SEP)"
+          value={formatVolumeM3(meter.sep_total_volume)}
+          subtitle="Index cumules des 6 sources sur la periode (m³)"
+        />
+        <KpiCard
+          title="Capteurs pression"
+          value={sensors.registry_sensor_count || sensors.distinct_sensors || 0}
+          subtitle="Deployes sur le reseau"
+        />
+        <KpiCard
+          title="Zones instrumentees"
+          value={sensors.registry_zone_count || sensors.distinct_zones || 0}
+          subtitle={`~${Math.round(sensors.zone_spacing_m || 300)} m entre capteurs`}
+        />
         <KpiCard title="Intensite moyenne" value={Number(sensors.avg_intensity || 0).toFixed(2)} subtitle="Signal pression" />
         <KpiCard title="Alertes actives" value={networkState.active_alerts || 0} subtitle="Risque reseau" />
       </section>
@@ -65,6 +87,18 @@ export function DashboardPage() {
         </InsightCard>
       </section>
 
+      <InsightCard title="Comment sont calcules les debits ?">
+        <p className="map-caption kpi-help-text">
+          Chaque releve fournit un <strong>index cumule en m³</strong>. Entre deux dates : ΔV = index<sub>nouveau</sub>{" "}
+          − index<sub>ancien</sub>, puis <strong>débit = ΔV / Δt</strong> avec Δt en heures → résultat en{" "}
+          <strong>m³/h</strong>. Le debit <em>typique</em> est la <strong>mediane</strong> des debits moyens de chaque
+          compteur (hors pics au-dela de {Number(meter.flow_cap_m3h || 2000).toFixed(0)} m³/h). Le debit{" "}
+          <em>sources SEP</em> additionne uniquement les 6 compteurs lies aux colonnes du fichier SEP (mesure directe).
+          Les 16 autres compteurs recoivent une <strong>estimation repartie</strong> : ne pas les additionner aux
+          sources pour eviter un double comptage.
+        </p>
+      </InsightCard>
+
       <section className="split-grid">
         <EventList title="Points d'alertes recents" items={alerts} mode="alerts" />
         <InsightCard title="Lecture rapide">
@@ -78,8 +112,8 @@ export function DashboardPage() {
               <span>Compteurs les plus exposes</span>
             </div>
             <div className="stat-pill">
-              <strong>{Number(meter.max_flow || 0).toFixed(2)}</strong>
-              <span>Pic debit observe</span>
+              <strong>{formatFlowM3h(meter.max_flow)}</strong>
+              <span>Pic debit (hors aberrations)</span>
             </div>
           </div>
           <ul className="event-list event-list--compact">

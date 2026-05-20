@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { adminApi } from "../../services/adminApi";
+import { AdminPageHeader } from "../../components/AdminPageHeader";
+import { AdminPlanPicker, pointsFromMeters } from "../../components/admin/AdminPlanPicker";
+import { wasDeleteCancelled } from "../../utils/confirmDelete";
 
 const EMPTY = { meter_id: "", name: "", plan_x: "", plan_y: "", active: true, notes: "" };
 
@@ -35,22 +38,34 @@ export function AdminMetersPage() {
     });
   }
 
+  function setPlanCoords(x, y) {
+    setForm((f) => ({ ...f, plan_x: x, plan_y: y }));
+  }
+
   async function save(e) {
     e.preventDefault();
     setError("");
+    if (form.plan_x === "" || form.plan_y === "") {
+      setError("Cliquez sur le plan pour definir la position du compteur.");
+      return;
+    }
     try {
       const body = {
         name: form.name,
-        plan_x: form.plan_x === "" ? null : Number(form.plan_x),
-        plan_y: form.plan_y === "" ? null : Number(form.plan_y),
+        plan_x: Number(form.plan_x),
+        plan_y: Number(form.plan_y),
         active: form.active,
         notes: form.notes,
       };
       if (editing) {
         await adminApi.updateMeter(editing, body);
       } else {
+        if (!form.meter_id.trim()) {
+          setError("ID compteur requis.");
+          return;
+        }
         await adminApi.createMeter({
-          meter_id: form.meter_id,
+          meter_id: form.meter_id.trim(),
           ...body,
         });
       }
@@ -63,9 +78,9 @@ export function AdminMetersPage() {
   }
 
   async function remove(id, hard = false) {
-    if (!window.confirm(hard ? "Suppression definitive ?" : "Desactiver ce compteur ?")) return;
     try {
-      await adminApi.deleteMeter(id, hard);
+      const res = await adminApi.deleteMeter(id, hard);
+      if (wasDeleteCancelled(res)) return;
       await load();
     } catch (err) {
       setError(err.message);
@@ -74,64 +89,67 @@ export function AdminMetersPage() {
 
   return (
     <div className="admin-page">
-      <header className="admin-page-header">
-        <div>
-          <h2>Compteurs</h2>
-          <p>Ajouter, modifier ou desactiver les compteurs du reseau.</p>
-        </div>
+      <AdminPageHeader
+        title="Compteurs"
+        description="Placez le compteur sur le plan, puis completez les informations et enregistrez."
+      >
         <button type="button" className="btn-primary" onClick={openCreate}>
           + Nouveau compteur
         </button>
-      </header>
+      </AdminPageHeader>
       {error ? <p className="error-box">{error}</p> : null}
 
       <section className="card admin-form-card">
         <h3>{editing ? `Modifier ${editing}` : "Nouveau compteur"}</h3>
-        <form className="admin-form-grid" onSubmit={save}>
-          {!editing ? (
-            <label>
-              ID compteur
-              <input
-                value={form.meter_id}
-                onChange={(e) => setForm({ ...form, meter_id: e.target.value })}
-                required
-              />
-            </label>
-          ) : null}
-          <label>
-            Nom affiche
-            <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
-          </label>
-          <label>
-            Plan X
-            <input value={form.plan_x} onChange={(e) => setForm({ ...form, plan_x: e.target.value })} />
-          </label>
-          <label>
-            Plan Y
-            <input value={form.plan_y} onChange={(e) => setForm({ ...form, plan_y: e.target.value })} />
-          </label>
-          <label className="admin-checkbox">
-            <input
-              type="checkbox"
-              checked={form.active}
-              onChange={(e) => setForm({ ...form, active: e.target.checked })}
-            />
-            Actif
-          </label>
-          <label className="admin-form-full">
-            Notes
-            <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={2} />
-          </label>
-          <div className="admin-form-actions admin-form-full">
-            <button type="submit" className="btn-primary">
-              {editing ? "Enregistrer" : "Creer"}
-            </button>
-            {editing ? (
-              <button type="button" className="btn-ghost" onClick={openCreate}>
-                Annuler
-              </button>
+        <form onSubmit={save} className="admin-form-with-map">
+          <div className="admin-form-grid">
+            {!editing ? (
+              <label>
+                ID compteur
+                <input
+                  value={form.meter_id}
+                  onChange={(e) => setForm({ ...form, meter_id: e.target.value })}
+                  required
+                  placeholder="Ex. BCA1"
+                />
+              </label>
             ) : null}
+            <label>
+              Nom affiche
+              <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+            </label>
+            <label className="admin-checkbox">
+              <input
+                type="checkbox"
+                checked={form.active}
+                onChange={(e) => setForm({ ...form, active: e.target.checked })}
+              />
+              Actif
+            </label>
+            <label className="admin-form-full">
+              Notes
+              <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={2} />
+            </label>
+            <div className="admin-form-actions admin-form-full">
+              <button type="submit" className="btn-primary">
+                {editing ? "Enregistrer" : "Creer"}
+              </button>
+              {editing ? (
+                <button type="button" className="btn-ghost" onClick={openCreate}>
+                  Annuler
+                </button>
+              ) : null}
+            </div>
           </div>
+          <AdminPlanPicker
+            variant="meters"
+            planX={form.plan_x}
+            planY={form.plan_y}
+            onChange={setPlanCoords}
+            existingPoints={pointsFromMeters(items)}
+            excludeId={editing}
+            title="Cliquez pour placer le compteur"
+          />
         </form>
       </section>
 

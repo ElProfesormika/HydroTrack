@@ -32,7 +32,11 @@
         height: 75vh;
         border: 1px solid #c8d7eb;
         border-radius: 10px;
-        background: #fff;
+        background: #e8eef4;
+      }
+      #map-capteurs .leaflet-image-layer img {
+        filter: brightness(0.86) contrast(0.72) saturate(0.8);
+        opacity: 0.92;
       }
     </style>
   </head>
@@ -59,7 +63,7 @@
 
       createPlanMap({
         mapId: "map-capteurs",
-        imageUrl: "/plans/plan-capteurs.png",
+        imageUrl: "/plans/edf-plan.jpeg",
         markers: capteurs,
       });
     </script>

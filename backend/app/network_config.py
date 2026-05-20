@@ -63,6 +63,11 @@ SEP_COLUMN_TO_METER: dict[str, str] = {
     "NOG 2SEP991QD": "CCAS",
 }
 
+SEP_METER_IDS: list[str] = list(SEP_COLUMN_TO_METER.values())
+
+# Plafond pour les KPI (releves trop rapproches ou index aberrants)
+MAX_FLOW_RATE_M3H_KPI: float = 2000.0
+
 # Repartition par defaut pour les compteurs sans colonne CSV dediee
 DEFAULT_DISTRIBUTION_METERS: list[str] = [
     mid for mid in NETWORK_METER_IDS if mid not in SEP_COLUMN_TO_METER.values()

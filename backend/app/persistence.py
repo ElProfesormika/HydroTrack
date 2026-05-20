@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import sqlite3
+import statistics
 import threading
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
 from .models import Alert, Anomaly, MeterDataIn, PressureDataIn
-from .network_config import NETWORK_METER_IDS
+from .network_config import MAX_FLOW_RATE_M3H_KPI, NETWORK_METER_IDS, SEP_METER_IDS
 
 
 class SQLiteStore:
@@ -138,6 +139,31 @@ class SQLiteStore:
     def delete_meter_data(self, row_id: int) -> None:
         self._execute_commit("DELETE FROM meter_data WHERE id = ?", (row_id,))
 
+    def get_previous_meter_index(
+        self,
+        meter_id: str,
+        before_timestamp: str,
+        exclude_row_id: int | None = None,
+    ) -> dict[str, Any] | None:
+        """Dernier index compteur (volume) strictement anterieur a before_timestamp."""
+        params: list[Any] = [meter_id, before_timestamp]
+        exclude_sql = ""
+        if exclude_row_id is not None:
+            exclude_sql = " AND id != ?"
+            params.append(exclude_row_id)
+        row = self._fetchone(
+            f"""
+            SELECT id, timestamp, volume, flow_rate
+            FROM meter_data
+            WHERE meter_id = ? AND datetime(timestamp) < datetime(?)
+            {exclude_sql}
+            ORDER BY datetime(timestamp) DESC, id DESC
+            LIMIT 1
+            """,
+            tuple(params),
+        )
+        return dict(row) if row else None
+
     def insert_pressure_data(self, item: PressureDataIn) -> None:
         self._execute_commit(
             """
@@ -259,21 +285,85 @@ class SQLiteStore:
         }
 
     def meter_kpis(self) -> dict[str, Any]:
+        """KPIs reseau. Debit unitaire : m3/h = delta index cumule (m3) / delta t (h)."""
         meter_filter, meter_params = self._meter_filter_sql()
-        row = self._fetchone(
+        cap = MAX_FLOW_RATE_M3H_KPI
+        base = self._fetchone(
             f"""
             SELECT
                 COUNT(*) AS total_points,
                 COUNT(DISTINCT meter_id) AS distinct_meters,
-                COALESCE(AVG(flow_rate), 0.0) AS avg_flow,
-                COALESCE(MAX(flow_rate), 0.0) AS max_flow,
-                COALESCE(SUM(volume), 0.0) AS total_volume
+                COALESCE(AVG(flow_rate), 0.0) AS avg_flow_per_reading,
+                COALESCE(MAX(flow_rate), 0.0) AS max_flow_raw
             FROM meter_data
             WHERE {meter_filter}
             """,
             tuple(meter_params),
         )
-        return dict(row)
+        flow_rows = self._fetchall(
+            f"""
+            SELECT meter_id, flow_rate
+            FROM meter_data
+            WHERE {meter_filter} AND flow_rate >= 0 AND flow_rate <= ?
+            """,
+            tuple(meter_params) + (cap,),
+        )
+        by_meter: dict[str, list[float]] = defaultdict(list)
+        all_capped: list[float] = []
+        for row in flow_rows:
+            rate = float(row["flow_rate"] or 0.0)
+            by_meter[str(row["meter_id"])].append(rate)
+            all_capped.append(rate)
+
+        meter_avgs: dict[str, float] = {
+            mid: sum(rates) / len(rates) for mid, rates in by_meter.items() if rates
+        }
+        sep_set = set(SEP_METER_IDS)
+        sep_avgs = [meter_avgs[mid] for mid in SEP_METER_IDS if mid in meter_avgs]
+
+        sep_placeholders = ",".join("?" * len(SEP_METER_IDS))
+        sep_volume_row = self._fetchone(
+            f"""
+            SELECT COALESCE(SUM(meter_volume), 0.0) AS sep_total_volume
+            FROM (
+                SELECT MAX(volume) - MIN(volume) AS meter_volume
+                FROM meter_data
+                WHERE meter_id IN ({sep_placeholders})
+                GROUP BY meter_id
+            )
+            """,
+            tuple(SEP_METER_IDS),
+        )
+        volume_row = self._fetchone(
+            f"""
+            SELECT COALESCE(SUM(meter_volume), 0.0) AS total_volume
+            FROM (
+                SELECT MAX(volume) - MIN(volume) AS meter_volume
+                FROM meter_data
+                WHERE {meter_filter}
+                GROUP BY meter_id
+            )
+            """,
+            tuple(meter_params),
+        )
+
+        typical_flow = statistics.median(meter_avgs.values()) if meter_avgs else 0.0
+        sep_sources_flow = sum(sep_avgs) if sep_avgs else 0.0
+        max_flow_robust = max(all_capped) if all_capped else 0.0
+
+        return {
+            **dict(base),
+            "avg_flow": float(typical_flow),
+            "sep_sources_flow": float(sep_sources_flow),
+            "avg_flow_per_reading": float(base["avg_flow_per_reading"] or 0),
+            "max_flow": float(max_flow_robust),
+            "max_flow_raw": float(base["max_flow_raw"] or 0),
+            "total_volume": float(volume_row["total_volume"] or 0),
+            "sep_total_volume": float(sep_volume_row["sep_total_volume"] or 0),
+            "flow_unit": "m3/h",
+            "volume_unit": "m3",
+            "flow_cap_m3h": cap,
+        }
 
     def sensor_kpis(self) -> dict[str, Any]:
         row = self._fetchone(
@@ -556,7 +646,7 @@ class SQLiteStore:
                 COUNT(*) AS total_points,
                 COALESCE(AVG(flow_rate), 0.0) AS avg_flow,
                 COALESCE(MAX(flow_rate), 0.0) AS max_flow,
-                COALESCE(SUM(volume), 0.0) AS total_volume
+                COALESCE(MAX(volume) - MIN(volume), 0.0) AS total_volume
             FROM meter_data
             WHERE meter_id = ?
             """,

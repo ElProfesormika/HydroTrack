@@ -18,22 +18,25 @@ function confirmationClass(status) {
   return "";
 }
 
-export function SensorZonesPanel({ zones }) {
+export function SensorZonesPanel({ zones, networkKm = "10.0", zoneSpacingM = 300 }) {
   if (!zones?.length) {
     return (
       <section className="card">
         <h3>Zones capteurs (troncons)</h3>
-        <p className="map-caption">Aucune donnee capteur. Utilisez POST /api/sensors/pressure ou le script seed.</p>
+        <p className="map-caption">
+          Reseau ~{networkKm} km. Aucune zone chargee. Utilisez POST /api/sensors/pressure ou le
+          script seed_pressure_demo.py pour injecter des mesures.
+        </p>
       </section>
     );
   }
 
   return (
     <section className="card sensor-zones-panel">
-      <h3>Zones capteurs entre compteurs</h3>
+      <h3>Zones capteurs entre compteurs ({zones.length})</h3>
       <p className="map-caption">
-        Chaque zone couvre un troncon entre deux compteurs. En cas d&apos;alerte compteur, les capteurs confirment la
-        fuite puis estiment la distance depuis le compteur amont.
+        Reseau ~{networkKm} km : une zone tous les ~{zoneSpacingM} m (2 capteurs pression par zone). En cas
+        d&apos;alerte compteur, les capteurs confirment la fuite puis estiment la distance depuis le compteur amont.
       </p>
       <div className="zone-cards-grid">
         {zones.map((zone) => {

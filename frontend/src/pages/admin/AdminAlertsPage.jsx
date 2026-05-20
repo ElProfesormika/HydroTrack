@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
+import { AdminPageHeader } from "../../components/AdminPageHeader";
 import { adminApi } from "../../services/adminApi";
+import { confirmAction, wasDeleteCancelled } from "../../utils/confirmDelete";
 
 const STATUSES = ["active", "acknowledged", "resolved", "dismissed"];
 
@@ -18,6 +20,12 @@ export function AdminAlertsPage() {
   }, [load]);
 
   async function updateStatus(id, status) {
+    const labels = {
+      resolved: `Marquer l'alerte #${id} comme resolue ?`,
+      dismissed: `Ignorer l'alerte #${id} ? Elle ne sera plus affichee comme active.`,
+      acknowledged: `Acquitter l'alerte #${id} ?`,
+    };
+    if (labels[status] && !confirmAction(labels[status])) return;
     try {
       await adminApi.updateAlert(id, { status, admin_notes: `Statut admin: ${status}` });
       await load();
@@ -27,9 +35,9 @@ export function AdminAlertsPage() {
   }
 
   async function remove(id) {
-    if (!window.confirm("Supprimer cette alerte ?")) return;
     try {
-      await adminApi.deleteAlert(id);
+      const res = await adminApi.deleteAlert(id);
+      if (wasDeleteCancelled(res)) return;
       await load();
     } catch (err) {
       setError(err.message);
@@ -38,11 +46,7 @@ export function AdminAlertsPage() {
 
   return (
     <div className="admin-page">
-      <header className="admin-page-header">
-        <div>
-          <h2>Alertes</h2>
-          <p>Acquitter, resoudre ou supprimer les alertes du systeme.</p>
-        </div>
+      <AdminPageHeader title="Alertes" description="Acquitter, resoudre ou supprimer les alertes du systeme.">
         <select value={filter} onChange={(e) => setFilter(e.target.value)} className="admin-select">
           <option value="">Tous statuts</option>
           {STATUSES.map((s) => (
@@ -51,7 +55,7 @@ export function AdminAlertsPage() {
             </option>
           ))}
         </select>
-      </header>
+      </AdminPageHeader>
       {error ? <p className="error-box">{error}</p> : null}
 
       <section className="card">

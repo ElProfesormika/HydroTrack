@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
+import { AdminPageHeader } from "../../components/AdminPageHeader";
 import { adminApi } from "../../services/adminApi";
+import { confirmAction } from "../../utils/confirmDelete";
 
 export function AdminDashboardPage() {
   const [overview, setOverview] = useState(null);
@@ -22,7 +24,8 @@ export function AdminDashboardPage() {
     load();
   }, [load]);
 
-  async function runAction(fn) {
+  async function runAction(fn, confirmMessage) {
+    if (confirmMessage && !confirmAction(confirmMessage)) return;
     setBusy(true);
     try {
       await fn();
@@ -36,20 +39,36 @@ export function AdminDashboardPage() {
 
   return (
     <div className="admin-page">
-      <header className="admin-page-header">
-        <div>
-          <h2>Vue d&apos;ensemble</h2>
-          <p>Gestion globale du reseau HydroTrack — registre, telemetrie et incidents.</p>
-        </div>
+      <AdminPageHeader
+        title="Vue d'ensemble"
+        description="Gestion globale du reseau HydroTrack — registre, telemetrie et incidents."
+      >
         <div className="admin-actions-row">
-          <button type="button" className="btn-secondary" disabled={busy} onClick={() => runAction(adminApi.reloadRegistry)}>
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={busy}
+            onClick={() =>
+              runAction(adminApi.reloadRegistry, "Recharger le registre reseau depuis la base de donnees ?")
+            }
+          >
             Recharger registre
           </button>
-          <button type="button" className="btn-secondary" disabled={busy} onClick={() => runAction(adminApi.syncLeaks)}>
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={busy}
+            onClick={() =>
+              runAction(
+                adminApi.syncLeaks,
+                "Synchroniser les incidents de fuite depuis les localisations detectees ?",
+              )
+            }
+          >
             Sync fuites
           </button>
         </div>
-      </header>
+      </AdminPageHeader>
 
       {error ? <p className="error-box">{error}</p> : null}
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from . import network_topology
 from .models import Alert
 from .registry import NetworkRegistry
 
@@ -96,6 +97,8 @@ class AdminStore:
             "ALTER TABLE alerts ADD COLUMN status TEXT DEFAULT 'active'",
             "ALTER TABLE alerts ADD COLUMN admin_notes TEXT DEFAULT ''",
             "ALTER TABLE alerts ADD COLUMN resolved_at TEXT",
+            "ALTER TABLE registry_sensors ADD COLUMN plan_x REAL",
+            "ALTER TABLE registry_sensors ADD COLUMN plan_y REAL",
         ):
             try:
                 self.sqlite._conn.execute(col_sql)
@@ -106,6 +109,7 @@ class AdminStore:
     def bootstrap_registry_if_empty(self) -> None:
         row = self.sqlite._fetchone("SELECT COUNT(*) AS n FROM registry_meters")
         if int(row["n"]) > 0:
+            self.sync_topology_from_defaults()
             self.reload_registry()
             return
         self.registry.load_defaults()
@@ -175,8 +179,9 @@ class AdminStore:
             self.sqlite._execute_commit(
                 """
                 INSERT INTO registry_sensors(
-                    sensor_id, zone_id, segment_id, role, name, active, notes, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    sensor_id, zone_id, segment_id, role, name, plan_x, plan_y,
+                    active, notes, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     sensor["sensor_id"],
@@ -184,6 +189,8 @@ class AdminStore:
                     sensor.get("segment_id"),
                     sensor.get("role"),
                     sensor["name"],
+                    sensor.get("plan_x"),
+                    sensor.get("plan_y"),
                     1,
                     sensor.get("notes") or "",
                     now,
@@ -191,6 +198,84 @@ class AdminStore:
                 ),
             )
         self.reload_registry()
+
+    def sync_topology_from_defaults(self) -> None:
+        """Recharge zones / troncons / capteurs si la topologie a change (~300 m / 10 km)."""
+        row = self.sqlite._fetchone("SELECT COUNT(*) AS n FROM registry_zones")
+        current = int(row["n"] or 0)
+        if current == network_topology.ZONE_COUNT:
+            return
+        self.registry.load_defaults()
+        now = datetime.now(timezone.utc).isoformat()
+        with self.sqlite._lock:
+            self.sqlite._conn.execute("DELETE FROM registry_sensors")
+            self.sqlite._conn.execute("DELETE FROM registry_segments")
+            self.sqlite._conn.execute("DELETE FROM registry_zones")
+            self.sqlite._conn.commit()
+        for z in self.registry.zones:
+            self.sqlite._execute_commit(
+                """
+                INSERT INTO registry_zones(
+                    zone_id, name, short_name, plan_x, plan_y, lat, lng, active, notes, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    z["zone_id"],
+                    z["name"],
+                    z.get("short_name"),
+                    z.get("plan_x"),
+                    z.get("plan_y"),
+                    z.get("lat"),
+                    z.get("lng"),
+                    1,
+                    z.get("notes") or "",
+                    now,
+                    now,
+                ),
+            )
+        for s in self.registry.segments:
+            self.sqlite._execute_commit(
+                """
+                INSERT INTO registry_segments(
+                    segment_id, zone_id, upstream_meter, downstream_meter, length_m,
+                    active, notes, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    s["segment_id"],
+                    s["zone_id"],
+                    s["upstream_meter"],
+                    s["downstream_meter"],
+                    s["length_m"],
+                    1,
+                    s.get("notes") or "",
+                    now,
+                    now,
+                ),
+            )
+        for sensor in self.registry.sensors:
+            self.sqlite._execute_commit(
+                """
+                INSERT INTO registry_sensors(
+                    sensor_id, zone_id, segment_id, role, name, plan_x, plan_y,
+                    active, notes, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    sensor["sensor_id"],
+                    sensor["zone_id"],
+                    sensor.get("segment_id"),
+                    sensor.get("role"),
+                    sensor["name"],
+                    sensor.get("plan_x"),
+                    sensor.get("plan_y"),
+                    1,
+                    sensor.get("notes") or "",
+                    now,
+                    now,
+                ),
+            )
+        self._audit("sync", "topology", f"v{network_topology.TOPOLOGY_VERSION}")
 
     def reload_registry(self) -> None:
         meters = [dict(r) for r in self.sqlite._fetchall("SELECT * FROM registry_meters ORDER BY meter_id")]
@@ -394,8 +479,9 @@ class AdminStore:
         self.sqlite._execute_commit(
             """
             INSERT INTO registry_sensors(
-                sensor_id, zone_id, segment_id, role, name, active, notes, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                sensor_id, zone_id, segment_id, role, name, plan_x, plan_y,
+                active, notes, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 sid,
@@ -403,6 +489,8 @@ class AdminStore:
                 data.get("segment_id"),
                 data.get("role") or "upstream",
                 data.get("name") or sid,
+                data.get("plan_x"),
+                data.get("plan_y"),
                 1 if data.get("active", True) else 0,
                 data.get("notes") or "",
                 now,
@@ -425,7 +513,8 @@ class AdminStore:
         self.sqlite._execute_commit(
             """
             UPDATE registry_sensors SET
-                zone_id = ?, segment_id = ?, role = ?, name = ?, active = ?, notes = ?, updated_at = ?
+                zone_id = ?, segment_id = ?, role = ?, name = ?, plan_x = ?, plan_y = ?,
+                active = ?, notes = ?, updated_at = ?
             WHERE sensor_id = ?
             """,
             (
@@ -433,6 +522,8 @@ class AdminStore:
                 data.get("segment_id", current.get("segment_id")),
                 data.get("role", current.get("role")),
                 data.get("name", current["name"]),
+                data.get("plan_x", current.get("plan_x")),
+                data.get("plan_y", current.get("plan_y")),
                 1 if data.get("active", current.get("active", 1)) else 0,
                 data.get("notes", current.get("notes") or ""),
                 now,

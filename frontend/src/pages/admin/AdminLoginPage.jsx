@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
+import { AppBrandLogos } from "../../components/AppBrandLogos";
+import { PageBackButton } from "../../components/PageBackButton";
 import { useAdminAuth } from "../../context/AdminAuthContext";
 
 export function AdminLoginPage() {
@@ -31,8 +33,12 @@ export function AdminLoginPage() {
 
   return (
     <div className="admin-login-page">
+      <div className="admin-login-top">
+        <PageBackButton to="/dashboard" label="Retour" />
+      </div>
       <form className="admin-login-card card" onSubmit={handleSubmit}>
-        <h2>Administration HydroTrack</h2>
+        <AppBrandLogos className="admin-login-logos" />
+        <h2 className="admin-login-subtitle">Administration</h2>
         <p className="map-caption">Acces complet : compteurs, capteurs, zones, alertes et incidents de fuite.</p>
 
         <label className="admin-field">

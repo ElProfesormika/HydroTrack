@@ -15,12 +15,22 @@ app.add_middleware(
         "http://127.0.0.1:8080",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://localhost:4173",
+        "http://127.0.0.1:4173",
     ],
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_methods=["*"],
     allow_headers=["*"],
 )
 store = InMemoryStore()
 admin_routes.bind_admin_store(store)
+
+
+async def _broadcast_registry_updated() -> None:
+    await _broadcast({"type": "registry", "action": "updated"})
+
+
+admin_routes.bind_registry_broadcast(_broadcast_registry_updated)
 ws_clients: list[WebSocket] = []
 app.include_router(admin_routes.router)
 
@@ -216,6 +226,12 @@ def get_map_alerts(limit: int = 50) -> dict:
 @app.get("/api/map/meters")
 def get_map_meters() -> dict:
     items = store.get_map_meter_items()
+    return {"count": len(items), "items": items}
+
+
+@app.get("/api/map/sensors")
+def get_map_sensors() -> dict:
+    items = store.get_map_sensor_items()
     return {"count": len(items), "items": items}
 
 

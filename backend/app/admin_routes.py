@@ -1,4 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from collections.abc import Awaitable, Callable
+from typing import Any
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
 from .admin_auth import ADMIN_KEY, verify_admin_credentials, verify_admin_key
 from .models import (
@@ -17,11 +20,22 @@ from .services import InMemoryStore
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 _store_ref: list[InMemoryStore] = []
+_registry_broadcast: Callable[[], Awaitable[Any]] | None = None
 
 
 def bind_admin_store(store: InMemoryStore) -> None:
     _store_ref.clear()
     _store_ref.append(store)
+
+
+def bind_registry_broadcast(callback: Callable[[], Awaitable[Any]]) -> None:
+    global _registry_broadcast
+    _registry_broadcast = callback
+
+
+def _push_registry_broadcast(background_tasks: BackgroundTasks) -> None:
+    if _registry_broadcast:
+        background_tasks.add_task(_registry_broadcast)
 
 
 def get_store() -> InMemoryStore:
@@ -53,8 +67,13 @@ def admin_audit(
 
 
 @router.post("/registry/reload")
-def admin_reload_registry(_: str = Depends(verify_admin_key), store: InMemoryStore = Depends(get_store)) -> dict:
+def admin_reload_registry(
+    background_tasks: BackgroundTasks,
+    _: str = Depends(verify_admin_key),
+    store: InMemoryStore = Depends(get_store),
+) -> dict:
     store.admin.reload_registry()
+    _push_registry_broadcast(background_tasks)
     return {"status": "ok", "meters": len(store.registry.meters)}
 
 
@@ -78,11 +97,13 @@ def admin_list_meters(
 @router.post("/meters")
 def admin_create_meter(
     payload: AdminMeterIn,
+    background_tasks: BackgroundTasks,
     _: str = Depends(verify_admin_key),
     store: InMemoryStore = Depends(get_store),
 ) -> dict:
     try:
         item = store.admin.create_meter(payload.model_dump())
+        _push_registry_broadcast(background_tasks)
         return {"status": "created", "item": item}
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -92,11 +113,13 @@ def admin_create_meter(
 def admin_update_meter(
     meter_id: str,
     payload: AdminMeterUpdate,
+    background_tasks: BackgroundTasks,
     _: str = Depends(verify_admin_key),
     store: InMemoryStore = Depends(get_store),
 ) -> dict:
     try:
         item = store.admin.update_meter(meter_id, payload.model_dump(exclude_unset=True))
+        _push_registry_broadcast(background_tasks)
         return {"status": "updated", "item": item}
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -105,11 +128,14 @@ def admin_update_meter(
 @router.delete("/meters/{meter_id}")
 def admin_delete_meter(
     meter_id: str,
+    background_tasks: BackgroundTasks,
     hard: bool = False,
     _: str = Depends(verify_admin_key),
     store: InMemoryStore = Depends(get_store),
 ) -> dict:
-    return store.admin.delete_meter(meter_id, hard=hard)
+    result = store.admin.delete_meter(meter_id, hard=hard)
+    _push_registry_broadcast(background_tasks)
+    return result
 
 
 # —— Zones ——
@@ -126,11 +152,13 @@ def admin_list_zones(
 @router.post("/zones")
 def admin_create_zone(
     payload: AdminZoneIn,
+    background_tasks: BackgroundTasks,
     _: str = Depends(verify_admin_key),
     store: InMemoryStore = Depends(get_store),
 ) -> dict:
     try:
         item = store.admin.create_zone(payload.model_dump())
+        _push_registry_broadcast(background_tasks)
         return {"status": "created", "item": item}
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -140,11 +168,13 @@ def admin_create_zone(
 def admin_update_zone(
     zone_id: int,
     payload: AdminZoneUpdate,
+    background_tasks: BackgroundTasks,
     _: str = Depends(verify_admin_key),
     store: InMemoryStore = Depends(get_store),
 ) -> dict:
     try:
         item = store.admin.update_zone(zone_id, payload.model_dump(exclude_unset=True))
+        _push_registry_broadcast(background_tasks)
         return {"status": "updated", "item": item}
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -153,11 +183,14 @@ def admin_update_zone(
 @router.delete("/zones/{zone_id}")
 def admin_delete_zone(
     zone_id: int,
+    background_tasks: BackgroundTasks,
     hard: bool = False,
     _: str = Depends(verify_admin_key),
     store: InMemoryStore = Depends(get_store),
 ) -> dict:
-    return store.admin.delete_zone(zone_id, hard=hard)
+    result = store.admin.delete_zone(zone_id, hard=hard)
+    _push_registry_broadcast(background_tasks)
+    return result
 
 
 # —— Capteurs ——
@@ -174,11 +207,13 @@ def admin_list_sensors(
 @router.post("/sensors")
 def admin_create_sensor(
     payload: AdminSensorIn,
+    background_tasks: BackgroundTasks,
     _: str = Depends(verify_admin_key),
     store: InMemoryStore = Depends(get_store),
 ) -> dict:
     try:
         item = store.admin.create_sensor(payload.model_dump())
+        _push_registry_broadcast(background_tasks)
         return {"status": "created", "item": item}
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -188,11 +223,13 @@ def admin_create_sensor(
 def admin_update_sensor(
     sensor_id: str,
     payload: AdminSensorUpdate,
+    background_tasks: BackgroundTasks,
     _: str = Depends(verify_admin_key),
     store: InMemoryStore = Depends(get_store),
 ) -> dict:
     try:
         item = store.admin.update_sensor(sensor_id, payload.model_dump(exclude_unset=True))
+        _push_registry_broadcast(background_tasks)
         return {"status": "updated", "item": item}
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -201,11 +238,14 @@ def admin_update_sensor(
 @router.delete("/sensors/{sensor_id}")
 def admin_delete_sensor(
     sensor_id: str,
+    background_tasks: BackgroundTasks,
     hard: bool = False,
     _: str = Depends(verify_admin_key),
     store: InMemoryStore = Depends(get_store),
 ) -> dict:
-    return store.admin.delete_sensor(sensor_id, hard=hard)
+    result = store.admin.delete_sensor(sensor_id, hard=hard)
+    _push_registry_broadcast(background_tasks)
+    return result
 
 
 # —— Troncons ——
