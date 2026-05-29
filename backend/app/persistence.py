@@ -108,10 +108,28 @@ class SQLiteStore:
                     pressure_leak_score REAL,
                     sensor_correlation REAL,
                     trigger_sensor_id TEXT,
-                    meter_source TEXT
+                    meter_source TEXT,
+                    wave_speed_m_s REAL,
+                    delta_t_s REAL,
+                    delta_t_method TEXT,
+                    transient_score REAL,
+                    pipe_material TEXT,
+                    leak_radius_m REAL
                 );
                 """
             )
+            for col_def in (
+                "ALTER TABLE leak_localizations ADD COLUMN wave_speed_m_s REAL",
+                "ALTER TABLE leak_localizations ADD COLUMN delta_t_s REAL",
+                "ALTER TABLE leak_localizations ADD COLUMN delta_t_method TEXT",
+                "ALTER TABLE leak_localizations ADD COLUMN transient_score REAL",
+                "ALTER TABLE leak_localizations ADD COLUMN pipe_material TEXT",
+                "ALTER TABLE leak_localizations ADD COLUMN leak_radius_m REAL",
+            ):
+                try:
+                    self._conn.execute(col_def)
+                except Exception:
+                    pass
             self._conn.commit()
 
     def insert_meter_data(self, item: MeterDataIn) -> int:
@@ -251,6 +269,26 @@ class SQLiteStore:
         )
         return {str(row["meter_id"]): dict(row) for row in rows}
 
+    def latest_alert_by_meter_id(self) -> dict[str, dict[str, Any]]:
+        meter_filter, params = self._meter_filter_sql()
+        source_filter = meter_filter.replace("meter_id", "source_id")
+        rows = self._fetchall(
+            f"""
+            SELECT a.timestamp, a.severity, a.category, a.source_id, a.message,
+                   COALESCE(a.status, 'active') AS status
+            FROM alerts a
+            INNER JOIN (
+                SELECT source_id, MAX(id) AS max_id
+                FROM alerts
+                WHERE {source_filter}
+                  AND (status IS NULL OR status = '' OR status = 'active')
+                GROUP BY source_id
+            ) latest ON a.id = latest.max_id
+            """,
+            tuple(params),
+        )
+        return {str(row["source_id"]): dict(row) for row in rows}
+
     def get_latest_anomalies(self, limit: int) -> list[dict]:
         rows = self._fetchall(
             """
@@ -318,7 +356,6 @@ class SQLiteStore:
         meter_avgs: dict[str, float] = {
             mid: sum(rates) / len(rates) for mid, rates in by_meter.items() if rates
         }
-        sep_set = set(SEP_METER_IDS)
         sep_avgs = [meter_avgs[mid] for mid in SEP_METER_IDS if mid in meter_avgs]
 
         sep_placeholders = ",".join("?" * len(SEP_METER_IDS))
@@ -348,12 +385,17 @@ class SQLiteStore:
         )
 
         typical_flow = statistics.median(meter_avgs.values()) if meter_avgs else 0.0
+        network_total_flow = sum(meter_avgs.values()) if meter_avgs else 0.0
+        meters_with_flow = len(meter_avgs)
         sep_sources_flow = sum(sep_avgs) if sep_avgs else 0.0
         max_flow_robust = max(all_capped) if all_capped else 0.0
 
         return {
             **dict(base),
             "avg_flow": float(typical_flow),
+            "network_total_flow": float(network_total_flow),
+            "meters_with_flow": meters_with_flow,
+            "registry_meter_count": len(NETWORK_METER_IDS),
             "sep_sources_flow": float(sep_sources_flow),
             "avg_flow_per_reading": float(base["avg_flow_per_reading"] or 0),
             "max_flow": float(max_flow_robust),
@@ -936,8 +978,10 @@ class SQLiteStore:
                     confirmed, confirmation_confidence, distance_m_from_upstream,
                     segment_length_m, position_ratio, localization_confidence,
                     plan_x, plan_y, pressure_leak_score, sensor_correlation,
-                    trigger_sensor_id, meter_source
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    trigger_sensor_id, meter_source,
+                    wave_speed_m_s, delta_t_s, delta_t_method, transient_score, pipe_material,
+                    leak_radius_m
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record["timestamp"],
@@ -957,6 +1001,12 @@ class SQLiteStore:
                     record.get("sensor_correlation"),
                     record.get("trigger_sensor_id"),
                     record.get("meter_source"),
+                    record.get("wave_speed_m_s"),
+                    record.get("delta_t_s"),
+                    record.get("delta_t_method"),
+                    record.get("transient_score"),
+                    record.get("pipe_material"),
+                    record.get("leak_radius_m"),
                 ),
             )
             self._conn.commit()

@@ -1,6 +1,7 @@
 import { NavLink } from "react-router-dom";
 import { AppBrandLogos } from "../components/AppBrandLogos";
 
+/** Shell avec sidebar ; le contenu de la page est passe en children (pas d'Outlet). */
 export function AppLayout({ children }) {
   return (
     <div className="app-shell">
@@ -39,7 +40,7 @@ export function AppLayout({ children }) {
           </NavLink>
         </nav>
       </aside>
-      <main className="main-content">{children}</main>
+      <main className="main-content">{children ?? null}</main>
     </div>
   );
 }

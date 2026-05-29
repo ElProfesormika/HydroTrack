@@ -6,6 +6,7 @@ from typing import Any
 
 from . import network_config
 from . import network_topology
+from . import plan_coordinates
 
 
 class NetworkRegistry:
@@ -76,6 +77,12 @@ class NetworkRegistry:
                 "upstream_meter": s["upstream_meter"],
                 "downstream_meter": s["downstream_meter"],
                 "length_m": s["length_m"],
+                "pipe_material": s.get("pipe_material"),
+                "pipe_diameter_m": s.get("pipe_diameter_m"),
+                "pipe_wall_m": s.get("pipe_wall_m"),
+                "bulk_modulus_pa": s.get("bulk_modulus_pa"),
+                "fluid_density_kg_m3": s.get("fluid_density_kg_m3"),
+                "water_temp_c": s.get("water_temp_c"),
                 "active": 1,
                 "notes": "",
             }
@@ -126,6 +133,9 @@ class NetworkRegistry:
 
     def segment_for_zone(self, zone_id: int) -> dict[str, Any] | None:
         return self._segments_by_zone.get(zone_id)
+
+    def segment_by_id(self, segment_id: str) -> dict[str, Any] | None:
+        return self._segment_by_id.get(segment_id)
 
     def segments_for_meter(self, meter_id: str) -> list[dict[str, Any]]:
         return self._segments_by_meter.get(meter_id, [])
@@ -181,15 +191,10 @@ class NetworkRegistry:
         return None
 
     def interpolate_leak_plan_xy(self, segment: dict[str, Any], position_ratio: float) -> dict[str, float]:
-        up_id = segment["upstream_meter"]
-        down_id = segment["downstream_meter"]
-        up = next((m for m in self.meters if m["meter_id"] == up_id), None)
-        down = next((m for m in self.meters if m["meter_id"] == down_id), None)
-        zid = int(segment["zone_id"])
-        zone = self._zone_by_id.get(zid, {})
-        ux = float((up or {}).get("plan_x") or zone.get("plan_x") or 500)
-        uy = float((up or {}).get("plan_y") or zone.get("plan_y") or 500)
-        dx = float((down or {}).get("plan_x") or zone.get("plan_x") or 500)
-        dy = float((down or {}).get("plan_y") or zone.get("plan_y") or 500)
-        t = max(0.0, min(1.0, position_ratio))
-        return {"x": ux + (dx - ux) * t, "y": uy + (dy - uy) * t}
+        ends = plan_coordinates.resolve_segment_endpoints(self.meters, segment)
+        if not ends:
+            zid = int(segment["zone_id"])
+            zone = self._zone_by_id.get(zid, {})
+            plan = plan_coordinates.resolve_zone_plan_xy(zone, self.meters, segment, self.sensors)
+            return {"x": plan["x"], "y": plan["y"]}
+        return plan_coordinates.interpolate_plan_xy(ends[0], ends[1], position_ratio)

@@ -18,24 +18,90 @@ from .pressure_analysis import (
     pressure_leak_score,
 )
 from . import network_topology
+from . import plan_coordinates
 from .registry import NetworkRegistry
+from .risk_thresholds import (
+    LEAK_PROB_CAUTION,
+    LEAK_PROB_CRITICAL,
+    LEAK_PROB_WARNING,
+    meter_map_display,
+    risk_from_probability,
+)
 
 _BASE_LAT = 48.505
 _BASE_LNG = 3.53
 
 
 def _risk_from_leak(probability: float) -> str:
-    if probability >= 0.75:
-        return "critical"
-    if probability >= 0.5:
-        return "warning"
-    if probability >= 0.25:
-        return "caution"
-    return "normal"
+    return risk_from_probability(probability)
 
 
 def _risk_from_score(score: float) -> str:
-    return _risk_from_leak(score)
+    return risk_from_probability(score)
+
+
+def _enrich_leak_localization(
+    record: dict[str, Any] | None,
+    registry: NetworkRegistry | None = None,
+) -> dict[str, Any] | None:
+    if not record:
+        return record
+
+    from .wave_propagation import estimate_leak_zone_radius_m
+
+    enriched = dict(record)
+
+    if enriched.get("leak_radius_m") is None:
+        enriched["leak_radius_m"] = estimate_leak_zone_radius_m(
+            float(enriched.get("segment_length_m") or 300),
+            float(enriched.get("localization_confidence") or 0),
+            enriched.get("delta_t_method"),
+            wave_speed_m_s=enriched.get("wave_speed_m_s"),
+            delta_t_s=enriched.get("delta_t_s"),
+        )
+
+    if (
+        (enriched.get("plan_x") is None or enriched.get("plan_y") is None)
+        and enriched.get("position_ratio") is not None
+    ):
+        zid = int(enriched["zone_id"])
+        plan = None
+        if registry is not None:
+            seg_row = registry.segment_for_zone(zid)
+            if seg_row:
+                plan = registry.interpolate_leak_plan_xy(seg_row, float(enriched["position_ratio"]))
+        if plan is None:
+            from .network_topology import interpolate_leak_plan_xy, segment_for_zone
+
+            topo_seg = segment_for_zone(zid)
+            if topo_seg:
+                plan = interpolate_leak_plan_xy(topo_seg, float(enriched["position_ratio"]))
+        if plan:
+            enriched["plan_x"] = plan["x"]
+            enriched["plan_y"] = plan["y"]
+
+    dist = enriched.get("distance_m_from_upstream")
+    length_m = enriched.get("segment_length_m")
+    radius_m = enriched.get("leak_radius_m")
+    if length_m and radius_m is not None:
+        L = max(float(length_m), 1.0)
+        if dist is not None:
+            x = float(dist)
+        elif enriched.get("position_ratio") is not None:
+            x = float(enriched["position_ratio"]) * L
+        else:
+            x = None
+        if x is not None:
+            R = float(radius_m)
+            enriched["leak_zone_ratio_start"] = round(max(0.0, x - R) / L, 4)
+            enriched["leak_zone_ratio_end"] = round(min(L, x + R) / L, 4)
+
+    return enriched
+
+
+def _enrich_leak_radius(record: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Retrocompat — enrichissement sans registry."""
+    return _enrich_leak_localization(record, registry=None)
 
 
 def _zone_map_risk(confirmation: str, max_score: float) -> str:
@@ -110,7 +176,7 @@ class InMemoryStore:
                 "zone_ids": [int(s["zone_id"]) for s in self.registry.segments_for_meter(payload.meter_id)],
             }
 
-        if leak_probability >= 0.75:
+        if leak_probability >= LEAK_PROB_CRITICAL:
             alert = Alert(
                 timestamp=payload.timestamp,
                 severity="critical",
@@ -118,12 +184,12 @@ class InMemoryStore:
                 source_id=payload.meter_id,
                 message=(
                     f"Fuite suspectee critique sur {payload.meter_id} "
-                    f"(probabilite={leak_probability:.2f}) — confirmation capteurs en attente"
+                    f"(probabilite={leak_probability:.0%}) — confirmation capteurs en attente"
                 ),
             )
             self.alerts.append(alert)
             self.sqlite.insert_alert(alert)
-        elif leak_probability >= 0.5:
+        elif leak_probability >= LEAK_PROB_WARNING:
             alert = Alert(
                 timestamp=payload.timestamp,
                 severity="warning",
@@ -131,12 +197,12 @@ class InMemoryStore:
                 source_id=payload.meter_id,
                 message=(
                     f"Anomalie significative sur {payload.meter_id} "
-                    f"(probabilite={leak_probability:.2f})"
+                    f"(probabilite={leak_probability:.0%})"
                 ),
             )
             self.alerts.append(alert)
             self.sqlite.insert_alert(alert)
-        elif leak_probability >= 0.25:
+        elif leak_probability >= LEAK_PROB_CAUTION:
             alert = Alert(
                 timestamp=payload.timestamp,
                 severity="caution",
@@ -144,20 +210,7 @@ class InMemoryStore:
                 source_id=payload.meter_id,
                 message=(
                     f"Surveillance renforcee sur {payload.meter_id} "
-                    f"(probabilite={leak_probability:.2f})"
-                ),
-            )
-            self.alerts.append(alert)
-            self.sqlite.insert_alert(alert)
-        elif leak_probability >= 0.1:
-            alert = Alert(
-                timestamp=payload.timestamp,
-                severity="normal",
-                category="anomaly",
-                source_id=payload.meter_id,
-                message=(
-                    f"Leve legere sur {payload.meter_id} "
-                    f"(probabilite={leak_probability:.2f})"
+                    f"(probabilite={leak_probability:.0%})"
                 ),
             )
             self.alerts.append(alert)
@@ -170,9 +223,11 @@ class InMemoryStore:
         }
 
     def _segment_payload(self, seg: dict[str, Any]) -> dict[str, Any]:
+        from .wave_propagation import wave_speed_for_segment
+
         zid = int(seg["zone_id"])
         sensor_ids = [s["sensor_id"] for s in self.registry.sensors if int(s["zone_id"]) == zid]
-        return {
+        base = {
             "id": seg["segment_id"],
             "segment_id": seg["segment_id"],
             "zone_id": zid,
@@ -180,7 +235,18 @@ class InMemoryStore:
             "downstream_meter": seg["downstream_meter"],
             "length_m": float(seg["length_m"]),
             "sensor_ids": sensor_ids,
+            "pipe_material": seg.get("pipe_material"),
+            "pipe_diameter_m": seg.get("pipe_diameter_m"),
+            "pipe_wall_m": seg.get("pipe_wall_m"),
+            "bulk_modulus_pa": seg.get("bulk_modulus_pa"),
+            "fluid_density_kg_m3": seg.get("fluid_density_kg_m3"),
+            "water_temp_c": seg.get("water_temp_c"),
         }
+        try:
+            base["wave_physics"] = wave_speed_for_segment(base)
+        except Exception:
+            base["wave_physics"] = None
+        return base
 
     def ingest_meter(self, payload: MeterDataIn) -> dict[str, Any]:
         if payload.meter_id not in self.registry.meter_ids:
@@ -371,7 +437,43 @@ class InMemoryStore:
         return self.sqlite.alert_stats()
 
     def get_sensors_catalog(self) -> list[dict]:
-        return self.sqlite.sensors_catalog()
+        """Tous les capteurs du registre, enrichis telemetrie et statut zone."""
+        tel_by_id = {r["sensor_id"]: r for r in self.sqlite.sensors_catalog()}
+        status_by_sid: dict[str, dict[str, Any]] = {}
+        for zrow in self.get_zone_sensor_status():
+            for s in zrow.get("sensors") or []:
+                status_by_sid[str(s["sensor_id"])] = s
+
+        items: list[dict[str, Any]] = []
+        for reg in self.registry.sensors:
+            sid = str(reg["sensor_id"])
+            zid = int(reg["zone_id"])
+            zone = self.registry.zone_by_id(zid) or {}
+            tel = tel_by_id.get(sid, {})
+            st = status_by_sid.get(sid, {})
+            role = reg.get("role") or ("downstream" if sid.endswith("_B") else "upstream")
+            risk = st.get("status") or ("offline" if not tel.get("points") else "normal")
+            items.append(
+                {
+                    "sensor_id": sid,
+                    "name": reg.get("name") or sid.replace("_", " "),
+                    "zone_id": zid,
+                    "zone": zone.get("name") or f"Zone {zid:02d}",
+                    "zone_name": zone.get("name"),
+                    "zone_short_name": zone.get("short_name"),
+                    "role": role,
+                    "segment_id": reg.get("segment_id"),
+                    "active": bool(reg.get("active", 1)),
+                    "points": int(tel.get("points") or 0),
+                    "last_seen": st.get("last_seen") or tel.get("last_seen"),
+                    "leak_score": st.get("leak_score"),
+                    "status": risk,
+                    "risk_level": risk if risk in ("normal", "caution", "warning", "critical", "offline") else "offline",
+                    "has_data": risk != "offline" or bool(tel.get("points")),
+                }
+            )
+        items.sort(key=lambda x: (x["zone_id"], x["sensor_id"]))
+        return items
 
     def get_meter_profile(
         self,
@@ -519,21 +621,13 @@ class InMemoryStore:
                             "intensity": row.get("intensity"),
                             "frequency": row.get("frequency"),
                             "leak_score": round(score, 3),
-                            "status": (
-                                "critical"
-                                if score >= 0.75
-                                else "warning"
-                                if score >= 0.5
-                                else "caution"
-                                if score >= 0.25
-                                else "normal"
-                            ),
+                            "status": risk_from_probability(score),
                         }
                     )
                 else:
                     sensors.append({"sensor_id": sid, "status": "offline", "leak_score": 0})
 
-            leak = latest_leaks.get(zid)
+            leak = _enrich_leak_localization(latest_leaks.get(zid), self.registry)
             meter_ctx = pending_meter_context_for_zone(zid, self.pending_meter_suspicions)
             confirmation = "none"
             if leak and leak.get("confirmed"):
@@ -553,6 +647,10 @@ class InMemoryStore:
                         "upstream_meter": segment["upstream_meter"],
                         "downstream_meter": segment["downstream_meter"],
                         "length_m": segment["length_m"],
+                        "pipe_material": segment.get("pipe_material"),
+                        "pipe_material_label": (segment.get("wave_physics") or {}).get("pipe_material_label"),
+                        "wave_speed_m_s": (segment.get("wave_physics") or {}).get("wave_speed_m_s"),
+                        "wave_physics": segment.get("wave_physics"),
                     },
                     "sensors": sensors,
                     "confirmation_status": confirmation,
@@ -564,7 +662,10 @@ class InMemoryStore:
         return items
 
     def get_leak_localizations(self, limit: int = 20, confirmed_only: bool = False) -> list[dict[str, Any]]:
-        return self.sqlite.get_leak_localizations(limit=limit, confirmed_only=confirmed_only)
+        return [
+            _enrich_leak_localization(row, self.registry)
+            for row in self.sqlite.get_leak_localizations(limit=limit, confirmed_only=confirmed_only)
+        ]
 
     def get_map_zones_enriched(self) -> list[dict[str, Any]]:
         zone_status = {int(z["zone_id"]): z for z in self.get_zone_sensor_status()}
@@ -573,7 +674,7 @@ class InMemoryStore:
         for zone in self.registry.zones:
             zid = int(zone["zone_id"])
             seg = self.registry.segment_for_zone(zid)
-            leak = latest.get(zid)
+            leak = _enrich_leak_localization(latest.get(zid), self.registry)
             zs = zone_status.get(zid, {})
             confirmation = zs.get("confirmation_status", "none")
             max_score = float(zs.get("max_sensor_score") or 0)
@@ -583,6 +684,9 @@ class InMemoryStore:
                 status = "leak_confirmed"
             elif confirmation == "pending" or risk_level in ("warning", "critical", "caution"):
                 status = "investigating"
+            plan = plan_coordinates.resolve_zone_plan_xy(
+                zone, self.registry.meters, seg, self.registry.sensors
+            )
             items.append(
                 {
                     "id": zid,
@@ -590,8 +694,8 @@ class InMemoryStore:
                     "short_name": zone.get("short_name"),
                     "lat": zone.get("lat"),
                     "lng": zone.get("lng"),
-                    "plan_x": zone.get("plan_x"),
-                    "plan_y": zone.get("plan_y"),
+                    "plan_x": plan["x"],
+                    "plan_y": plan["y"],
                     "segment": seg,
                     "status": status,
                     "risk_level": risk_level,
@@ -611,8 +715,9 @@ class InMemoryStore:
             zid = int(reg_sensor["zone_id"])
             zone = zone_by_id.get(zid, {})
             reg_zone = self.registry.zone_by_id(zid) or {}
-            base_x = float(reg_zone.get("plan_x") or 500)
-            base_y = float(reg_zone.get("plan_y") or 500)
+            seg = self.registry.segment_for_zone(zid)
+            if reg_sensor.get("segment_id"):
+                seg = self.registry.segment_by_id(reg_sensor["segment_id"]) or seg
             sensor_row = next((s for s in (zone.get("sensors") or []) if s["sensor_id"] == sid), None)
             if sensor_row:
                 raw_status = sensor_row.get("status") or "offline"
@@ -631,21 +736,16 @@ class InMemoryStore:
                 risk_level = "critical"
             elif zone.get("confirmation_status") == "pending" and risk_level == "normal":
                 risk_level = "warning"
-            xy = network_topology.SENSOR_PLAN_XY.get(sid) or {}
-            plan_x = float(
-                reg_sensor.get("plan_x") if reg_sensor.get("plan_x") is not None else xy.get("x", base_x)
-            )
-            plan_y = float(
-                reg_sensor.get("plan_y") if reg_sensor.get("plan_y") is not None else xy.get("y", base_y)
-            )
+            plan = plan_coordinates.resolve_sensor_plan_xy(reg_sensor, self.registry.meters, seg)
             items.append(
                 {
                     "id": idx,
                     "sensor_id": sid,
                     "zone_id": zid,
                     "zone_name": zone.get("zone_name") or reg_zone.get("name"),
-                    "plan_x": round(plan_x, 1),
-                    "plan_y": round(plan_y, 1),
+                    "role": reg_sensor.get("role") or ("downstream" if sid.endswith("_B") else "upstream"),
+                    "plan_x": plan["x"],
+                    "plan_y": plan["y"],
                     "risk_level": risk_level,
                     "leak_score": leak_score,
                     "last_seen": last_seen,
@@ -661,8 +761,10 @@ class InMemoryStore:
         localizations = self.sqlite.get_leak_localizations(limit=limit, confirmed_only=True)
         items = []
         for loc in localizations:
+            loc = _enrich_leak_localization(loc, self.registry)
             if loc.get("plan_x") is None or loc.get("plan_y") is None:
                 continue
+            radius_m = loc.get("leak_radius_m")
             zone = self.registry.zone_by_id(int(loc["zone_id"])) or {}
             items.append(
                 {
@@ -672,31 +774,90 @@ class InMemoryStore:
                     "lng": zone.get("lng"),
                     "plan_x": loc["plan_x"],
                     "plan_y": loc["plan_y"],
+                    "position_ratio": loc.get("position_ratio"),
                     "severity": "critical" if (loc.get("localization_confidence") or 0) >= 0.6 else "warning",
                     "message": (
-                        f"Fuite localisee: {loc.get('distance_m_from_upstream', 0):.0f} m "
+                        f"Point de fuite : {loc.get('distance_m_from_upstream', 0):.0f} m "
                         f"depuis {loc.get('upstream_meter')} "
-                        f"({loc.get('localization_confidence', 0):.0%})"
+                        f"(confiance {loc.get('localization_confidence', 0):.0%}, "
+                        f"zone R≈{float(radius_m):.0f} m)"
                     ),
                     "timestamp": loc.get("timestamp"),
                     "distance_m_from_upstream": loc.get("distance_m_from_upstream"),
                     "segment_length_m": loc.get("segment_length_m"),
                     "upstream_meter": loc.get("upstream_meter"),
                     "downstream_meter": loc.get("downstream_meter"),
+                    "wave_speed_m_s": loc.get("wave_speed_m_s"),
+                    "delta_t_s": loc.get("delta_t_s"),
+                    "delta_t_method": loc.get("delta_t_method"),
+                    "transient_score": loc.get("transient_score"),
+                    "pipe_material": loc.get("pipe_material"),
+                    "leak_radius_m": radius_m,
+                    "leak_zone_ratio_start": loc.get("leak_zone_ratio_start"),
+                    "leak_zone_ratio_end": loc.get("leak_zone_ratio_end"),
+                    "localization_confidence": loc.get("localization_confidence"),
+                    "confirmed": True,
                 }
             )
         return items
 
+    def get_wave_physics_reference(self) -> dict[str, Any]:
+        from .wave_propagation import K_WATER_20C_PA, PIPE_MATERIALS, RHO_WATER_KG_M3
+
+        materials = [
+            {
+                "id": key,
+                "label": val["label"],
+                "young_modulus_pa": val["E"],
+                "density_kg_m3": val["rho_p"],
+            }
+            for key, val in PIPE_MATERIALS.items()
+        ]
+        return {
+            "bulk_modulus_water_pa": K_WATER_20C_PA,
+            "fluid_density_kg_m3": RHO_WATER_KG_M3,
+            "water_temp_c": 20,
+            "materials": materials,
+            "formulas": {
+                "wave_speed": "c = sqrt( (K/ρ) / (1 + (K·D)/(E·e)) )",
+                "leak_position": "x = (L + c·Δt) / 2",
+                "leak_zone_radius": "R ≈ (c·δΔt)/2 + (1−confiance)·L·10%  (zone tres reduite, plafonnee)",
+                "fluid_impedance": "Z_f = ρ · c",
+                "wall_impedance": "Z_p ≈ sqrt(E · ρ_p)",
+            },
+            "interpretation": (
+                "Une fuite genere une onde de pression transitoire dans l'eau et une vibration de paroi. "
+                "La vitesse c depend de la compressibilite du fluide (K) et de la rigidite du tuyau (E, D, e). "
+                "Le decalage temporel Δt entre deux capteurs permet de localiser le point x. "
+                "Le rayon R estime une zone de fuite tres reduite autour de x (incertitude metrologique), "
+                "pas l'etendue reelle de la fuite."
+            ),
+        }
+
     def get_map_meter_items(self) -> list[dict[str, Any]]:
         telemetry = self.sqlite.latest_meter_telemetry_by_id()
         anomalies = self.sqlite.latest_anomaly_by_meter_id()
+        alerts_by_meter = self.sqlite.latest_alert_by_meter_id()
         labels = self.registry.meter_labels()
         items: list[dict[str, Any]] = []
         for idx, meter in enumerate(self.registry.meters):
             meter_id = meter["meter_id"]
             tel = telemetry.get(meter_id, {})
             anom = anomalies.get(meter_id)
-            leak_p = float(anom["leak_probability"]) if anom else 0.0
+            alert = alerts_by_meter.get(meter_id)
+            has_reading = bool(tel.get("last_reading_at"))
+            has_anomaly = bool(anom)
+            has_alert = bool(alert)
+            display = meter_map_display(
+                anomaly_leak_probability=float(anom["leak_probability"]) if anom else None,
+                anomaly_score=float(anom["score"]) if anom else None,
+                has_reading=has_reading,
+                has_anomaly=has_anomaly,
+                alert=alert,
+                has_alert=has_alert,
+            )
+            risk_level = str(display["risk_level"])
+            display_prob = display.get("leak_probability")
             xy = network_topology.METER_PLAN_XY.get(meter_id) or {}
             plan_x = meter.get("plan_x") if meter.get("plan_x") is not None else xy.get("x")
             plan_y = meter.get("plan_y") if meter.get("plan_y") is not None else xy.get("y")
@@ -713,7 +874,12 @@ class InMemoryStore:
                     "last_flow_rate": tel.get("last_flow_rate"),
                     "last_volume": tel.get("last_volume"),
                     "latest_anomaly": anom,
-                    "risk_level": _risk_from_leak(leak_p),
+                    "latest_alert": alert,
+                    "has_data": has_reading or has_anomaly or has_alert,
+                    "risk_level": risk_level,
+                    "leak_probability": display_prob,
+                    "anomaly_score": display.get("anomaly_score"),
+                    "risk_source": display.get("risk_source"),
                 }
             )
         return items

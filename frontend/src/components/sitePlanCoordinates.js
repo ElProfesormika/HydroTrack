@@ -1,5 +1,13 @@
 export const PLAN_WIDTH = 1018;
 export const PLAN_HEIGHT = 880;
+/** Reseau modele ~10 km — echelle plan / metres */
+export const NETWORK_LENGTH_M = 10_000;
+export const PLAN_UNITS_PER_M = PLAN_WIDTH / NETWORK_LENGTH_M;
+
+export function metersToPlanRadius(radiusM) {
+  if (radiusM == null || Number.isNaN(Number(radiusM))) return 8;
+  return Math.max(4, Number(radiusM) * PLAN_UNITS_PER_M);
+}
 export const PLAN_BOUNDS = [
   [0, 0],
   [PLAN_HEIGHT, PLAN_WIDTH],

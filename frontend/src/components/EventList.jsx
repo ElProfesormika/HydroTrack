@@ -1,3 +1,9 @@
+import {
+  riskFromAlertSeverity,
+  riskFromProbability,
+  riskLabelWithProbability,
+} from "../utils/riskThresholds";
+
 function formatDate(iso) {
   if (!iso) return "-";
   const date = new Date(iso);
@@ -6,28 +12,15 @@ function formatDate(iso) {
 }
 
 function alertSeverityClass(severity) {
-  const s = String(severity || "").toLowerCase();
-  if (s === "critical") return "critical";
-  if (s === "warning") return "warning";
-  if (s === "caution") return "caution";
-  if (s === "normal" || s === "nominal" || s === "info") return "normal";
-  return "normal";
+  return riskFromAlertSeverity(severity);
 }
 
 function anomalyRiskClass(p) {
-  const prob = Number(p) || 0;
-  if (prob >= 0.75) return "critical";
-  if (prob >= 0.5) return "warning";
-  if (prob >= 0.25) return "caution";
-  return "normal";
+  return riskFromProbability(p);
 }
 
 function anomalyRiskLabel(p) {
-  const prob = Number(p) || 0;
-  if (prob >= 0.75) return "Critique";
-  if (prob >= 0.5) return "Attention";
-  if (prob >= 0.25) return "Vigilance";
-  return "Normal";
+  return riskLabelWithProbability(riskFromProbability(p), p);
 }
 
 function alertSeverityLabel(severity) {

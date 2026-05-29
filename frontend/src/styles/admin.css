@@ -26,6 +26,12 @@
   color: #0a0a0a;
 }
 
+.admin-coord-hint {
+  font-size: 0.75rem;
+  color: #64748b;
+  font-weight: 500;
+}
+
 .admin-brand-sub {
   display: block;
   font-size: 0.8rem;

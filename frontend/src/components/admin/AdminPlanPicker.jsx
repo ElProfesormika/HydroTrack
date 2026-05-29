@@ -2,7 +2,7 @@ import { CRS } from "leaflet";
 import { CircleMarker, ImageOverlay, MapContainer, useMapEvents } from "react-leaflet";
 
 import { PlanMapFitBounds } from "../PlanMapFit";
-import { PLAN_BOUNDS, PLAN_HEIGHT, PLAN_WIDTH, SENSOR_PLAN_POINTS } from "../sitePlanCoordinates";
+import { PLAN_BOUNDS, PLAN_HEIGHT, PLAN_WIDTH } from "../sitePlanCoordinates";
 import { confirmClearSelection } from "../../utils/confirmDelete";
 
 const PLAN_URL = {
@@ -36,20 +36,6 @@ function toMarkers(variant, existingPoints, excludeId) {
       color: p.kind === "meter" ? "#0d47a1" : p.kind === "zone" ? "#6a1b9a" : "#006064",
       fillColor: p.kind === "meter" ? "#64b5f6" : p.kind === "zone" ? "#ea80fc" : "#18ffff",
     });
-  }
-  if (variant === "sensors") {
-    for (const [id, pt] of Object.entries(SENSOR_PLAN_POINTS)) {
-      if (existingPoints?.some((p) => p.id === id)) continue;
-      markers.push({
-        key: `ref-${id}`,
-        x: pt.x,
-        y: pt.y,
-        radius: 6,
-        opacity: 0.55,
-        color: "#546e7a",
-        fillColor: "#cfd8dc",
-      });
-    }
   }
   return markers;
 }
@@ -145,8 +131,8 @@ export function AdminPlanPicker({
       </div>
       <p className="map-caption admin-plan-picker-hint">
         {variant === "meters"
-          ? "Plan compteurs : les points gris sont les emplacements existants."
-          : "Plan capteurs : reperez la zone sur le troncon (~300 m entre capteurs)."}
+          ? "Plan compteurs : les points bleus sont les compteurs deja places."
+          : "Bleu = compteurs · cyan = capteurs · violet = zones (centre des capteurs)."}
       </p>
     </div>
   );

@@ -329,6 +329,127 @@ body {
   cursor: pointer;
 }
 
+.map-risk-legend--sensors {
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+
+.map-legend-network {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.map-risk-legend-line {
+  display: inline-block;
+  width: 28px;
+  height: 0;
+  border-radius: 2px;
+}
+
+.map-risk-legend-line--backbone {
+  border-top: 4px solid #01579b;
+  opacity: 0.85;
+}
+
+.map-risk-legend-line--zone {
+  border-top: 6px solid #2e7d32;
+  opacity: 0.85;
+}
+
+.map-risk-legend-dot--sensor-fixed {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #90caf9;
+  box-shadow: inset 0 0 0 2px #0d47a1;
+}
+
+.map-risk-legend-line--zone-risk {
+  width: 26px;
+  border-top-width: 6px;
+  border-top-style: solid;
+  opacity: 0.92;
+}
+
+.map-risk-legend-line--leak-span {
+  width: 26px;
+  border-top: 8px solid #ff1744;
+  opacity: 0.9;
+}
+
+.map-risk-legend-dot--leak-point {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #c62828;
+  box-shadow: inset 0 0 0 2px #ffffff;
+}
+
+.map-leak-zone-span {
+  pointer-events: none;
+}
+
+.map-leak-point {
+  z-index: 600;
+}
+
+.map-leaflet--sensors .map-leak-point {
+  filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.55));
+}
+
+.map-risk-legend-dot--nodata {
+  background: repeating-linear-gradient(
+    -45deg,
+    #cfd8dc,
+    #cfd8dc 3px,
+    #90a4ae 3px,
+    #90a4ae 6px
+  ) !important;
+}
+
+.map-sensor-backbone {
+  pointer-events: none;
+}
+
+.map-zone-segment {
+  cursor: pointer;
+}
+
+.map-zone-marker {
+  pointer-events: auto;
+}
+
+.map-leaflet--sensors .map-sensor-marker {
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.4));
+}
+
+.map-sensor-marker--offline {
+  opacity: 0.75;
+}
+
+.map-leaflet--sensors .map-sensor-backbone,
+.map-leaflet--sensors .map-zone-segment {
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.45));
+}
+
+.map-meter--nodata {
+  opacity: 0.92;
+}
+
+.map-tooltip-risk--no_data {
+  color: #546e7a;
+}
+
+.map-tooltip-hint-inline {
+  font-size: 0.72rem;
+  color: var(--muted-soft);
+}
+
 .map-popup-link {
   margin-top: 8px;
   padding: 4px 10px;
@@ -583,6 +704,109 @@ body {
   padding-top: 8px;
   border-top: 1px solid var(--border);
   font-size: 0.85rem;
+}
+
+.zone-localization--physics {
+  background: var(--accent-light);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-top: 8px;
+}
+
+.zone-localization-meta {
+  margin: 8px 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.82rem;
+}
+
+.zone-card-wave {
+  color: var(--muted-soft);
+  font-size: 0.8rem;
+}
+
+.leak-physics-panel {
+  display: grid;
+  gap: 0;
+}
+
+.leak-physics-panel__inner {
+  display: grid;
+  gap: 14px;
+  padding-top: 4px;
+}
+
+.leak-physics-quote {
+  margin: 0;
+  padding: 12px 14px;
+  border-left: 4px solid var(--accent);
+  background: var(--accent-light);
+  color: var(--text-strong);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.leak-physics-formulas {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.leak-physics-formula {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.leak-physics-formula-label {
+  display: block;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted-soft);
+  margin-bottom: 4px;
+}
+
+.leak-physics-formula code {
+  font-size: 0.88rem;
+  color: var(--text-strong);
+}
+
+.leak-physics-constants {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+  margin: 0;
+}
+
+.leak-physics-constants dt {
+  font-size: 0.75rem;
+  color: var(--muted-soft);
+}
+
+.leak-physics-constants dd {
+  margin: 2px 0 0;
+  font-weight: 600;
+}
+
+.leak-physics-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.leak-physics-table caption {
+  text-align: left;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.leak-physics-table th,
+.leak-physics-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
 }
 
 .pipeline-steps {
@@ -1001,6 +1225,132 @@ body {
 .catalog-item span {
   color: var(--muted);
   font-size: 0.78rem;
+}
+
+.catalog-intro {
+  margin: 0 0 10px;
+}
+
+.catalog-fold {
+  overflow: hidden;
+}
+
+.catalog-fold h3 {
+  display: none;
+}
+
+.catalog-fold-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: var(--text-strong);
+}
+
+.catalog-fold-toggle:hover {
+  color: var(--primary, #0d47a1);
+}
+
+.catalog-fold-title {
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.catalog-fold-count {
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.catalog-fold-chevron {
+  flex-shrink: 0;
+  font-size: 1.1rem;
+  color: var(--muted);
+  line-height: 1;
+}
+
+.catalog-fold-hint {
+  margin: 8px 0 0;
+  padding-right: 24px;
+}
+
+.catalog-fold-body {
+  display: none;
+}
+
+.catalog-fold-body--open {
+  display: block;
+  margin-top: 12px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+}
+
+.catalog-fold-body--open::-webkit-scrollbar {
+  width: 6px;
+}
+
+.catalog-fold-body--open::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 3px;
+}
+
+.catalog-folds-row .insight-card-content {
+  padding-top: 0;
+}
+
+.catalog-grid--sensors {
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+}
+
+.catalog-item--sensor {
+  border-left: 3px solid var(--border);
+}
+
+.catalog-item--sensor.catalog-item--normal {
+  border-left-color: #2e7d32;
+}
+
+.catalog-item--sensor.catalog-item--caution {
+  border-left-color: #f9a825;
+}
+
+.catalog-item--sensor.catalog-item--warning {
+  border-left-color: #ef6c00;
+}
+
+.catalog-item--sensor.catalog-item--critical {
+  border-left-color: #c62828;
+}
+
+.catalog-item--sensor.catalog-item--offline {
+  border-left-color: #90a4ae;
+}
+
+.catalog-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.catalog-item-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15);
+}
+
+.catalog-item-meta {
+  font-size: 0.72rem !important;
+  color: var(--muted-soft) !important;
 }
 
 .tag {

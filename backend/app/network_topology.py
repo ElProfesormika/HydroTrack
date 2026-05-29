@@ -196,6 +196,12 @@ def _build_topology() -> tuple[
                 "downstream_meter": down,
                 "length_m": round(seg_len, 1),
                 "sensor_ids": sids,
+                "pipe_material": "steel",
+                "pipe_diameter_m": 0.25,
+                "pipe_wall_m": 0.008,
+                "bulk_modulus_pa": 2.2e9,
+                "fluid_density_kg_m3": 1000.0,
+                "water_temp_c": 20.0,
             }
         )
         sensor_plan[sids[0]] = {"x": round(_interp(start, end, 0.15)[0], 1), "y": round(_interp(start, end, 0.15)[1], 1)}

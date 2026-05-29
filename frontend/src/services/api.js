@@ -134,6 +134,7 @@ export const hydroApi = {
   getAlertStats: () => request("/api/dashboard/alert-stats"),
   getSensorsCatalog: () => request("/api/dashboard/sensors-catalog"),
   getZoneSensors: () => request("/api/dashboard/zone-sensors"),
+  getWavePhysics: () => request("/api/dashboard/wave-physics"),
   getNetworkTopology: () => request("/api/network/topology"),
   getLeakLocalizations: (limit = 20, confirmedOnly = false) => {
     const params = new URLSearchParams({ limit: String(limit) });

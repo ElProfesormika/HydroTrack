@@ -3,6 +3,11 @@ import { adminApi } from "../../services/adminApi";
 import { AdminPageHeader } from "../../components/AdminPageHeader";
 import { AdminPlanPicker, combinedSensorMapPoints } from "../../components/admin/AdminPlanPicker";
 import { wasDeleteCancelled } from "../../utils/confirmDelete";
+import {
+  buildMeterLookup,
+  resolveSensorPlanXY,
+  segmentForZone,
+} from "../../utils/planCoordinates";
 
 const EMPTY = {
   sensor_id: "",
@@ -20,19 +25,22 @@ export function AdminSensorsPage() {
   const [items, setItems] = useState([]);
   const [zones, setZones] = useState([]);
   const [meters, setMeters] = useState([]);
+  const [segments, setSegments] = useState([]);
   const [form, setForm] = useState(EMPTY);
   const [editing, setEditing] = useState(null);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
-    const [s, z, m] = await Promise.all([
+    const [s, z, m, seg] = await Promise.all([
       adminApi.listSensors(true),
       adminApi.listZones(true),
       adminApi.listMeters(true),
+      adminApi.listSegments(),
     ]);
     setItems(s.items || []);
     setZones(z.items || []);
     setMeters(m.items || []);
+    setSegments(seg.items || []);
   }, []);
 
   useEffect(() => {
@@ -66,18 +74,33 @@ export function AdminSensorsPage() {
   async function save(e) {
     e.preventDefault();
     setError("");
-    if (form.plan_x === "" || form.plan_y === "") {
-      setError("Cliquez sur le plan pour definir la position du capteur.");
-      return;
+    const meterLookup = buildMeterLookup(meters);
+    const seg =
+      (form.segment_id && segments.find((s) => s.segment_id === form.segment_id)) ||
+      segmentForZone(form.zone_id, segments);
+    let planX = form.plan_x;
+    let planY = form.plan_y;
+    if (planX === "" || planY === "") {
+      const derived = resolveSensorPlanXY(
+        { sensor_id: form.sensor_id, zone_id: Number(form.zone_id), role: form.role, segment_id: form.segment_id },
+        segments,
+        meterLookup
+      );
+      if (!seg && derived.x === 500 && derived.y === 500) {
+        setError("Cliquez sur le plan ou renseignez le troncon (compteurs amont/aval).");
+        return;
+      }
+      planX = derived.x;
+      planY = derived.y;
     }
     try {
       const body = {
         zone_id: Number(form.zone_id),
-        segment_id: form.segment_id || null,
+        segment_id: form.segment_id || seg?.segment_id || null,
         role: form.role,
         name: form.name,
-        plan_x: Number(form.plan_x),
-        plan_y: Number(form.plan_y),
+        plan_x: Number(planX),
+        plan_y: Number(planY),
         active: form.active,
         notes: form.notes,
       };
@@ -100,13 +123,14 @@ export function AdminSensorsPage() {
     }
   }
 
+  const meterLookup = buildMeterLookup(meters);
   const mapPoints = combinedSensorMapPoints(zones, items, meters);
 
   return (
     <div className="admin-page">
       <AdminPageHeader
         title="Capteurs pression"
-        description="Cliquez sur le plan pour placer le capteur, puis renseignez la zone et le nom."
+        description="Position : 15 % / 85 % entre compteurs amont/aval du troncon (role amont/aval), ou clic manuel."
       >
         <button type="button" className="btn-primary" onClick={openCreate}>
           + Nouveau capteur
@@ -198,14 +222,18 @@ export function AdminSensorsPage() {
               </tr>
             </thead>
             <tbody>
-              {items.map((row) => (
+              {items.map((row) => {
+                const pt = resolveSensorPlanXY(row, segments, meterLookup);
+                const fromMeters = row.plan_x == null || row.plan_y == null;
+                return (
                 <tr key={row.sensor_id}>
                   <td>
                     <code>{row.sensor_id}</code>
                   </td>
                   <td>{row.zone_id}</td>
                   <td>
-                    {row.plan_x != null ? `${Number(row.plan_x).toFixed(0)}, ${Number(row.plan_y).toFixed(0)}` : "—"}
+                    {`${pt.x.toFixed(0)}, ${pt.y.toFixed(0)}`}
+                    {fromMeters ? <span className="admin-coord-hint"> (compteurs)</span> : null}
                   </td>
                   <td>{row.role}</td>
                   <td>{row.active ? "Oui" : "Non"}</td>
@@ -221,7 +249,8 @@ export function AdminSensorsPage() {
                     </button>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

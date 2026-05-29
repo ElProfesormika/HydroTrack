@@ -1,3 +1,6 @@
+import { Link } from "react-router-dom";
+
+import { CollapsibleCatalogCard } from "../components/CollapsibleCatalogCard";
 import { DashboardHeader } from "../components/DashboardHeader";
 import { EventList } from "../components/EventList";
 import { InsightCard } from "../components/InsightCard";
@@ -5,6 +8,13 @@ import { KpiCard } from "../components/KpiCard";
 import { VariationChart } from "../components/VariationChart";
 import { useRealtimeDashboard } from "../hooks/useRealtimeDashboard";
 import { formatFlowM3h, formatVolumeM3 } from "../utils/formatUnits";
+import { MAP_PATH_BY_RISK, riskLabel } from "../utils/riskLevels";
+
+function sensorRoleLabel(role, sensorId) {
+  const r = (role || "").toLowerCase();
+  if (r === "downstream" || String(sensorId || "").endsWith("_B")) return "Aval";
+  return "Amont";
+}
 
 export function DashboardPage() {
   const { overview, timeseries, alerts, anomalies, mapMeters, sensorsCatalog, isConnected, error } =
@@ -13,6 +23,13 @@ export function DashboardPage() {
   const meter = overview?.meter_kpis || {};
   const sensors = overview?.sensor_kpis || {};
   const networkState = overview?.network_state || {};
+  const metersWithFlow = meter.meters_with_flow ?? meter.distinct_meters ?? 0;
+  const registryMeters = meter.registry_meter_count ?? mapMeters?.length ?? 0;
+  const totalFlowSubtitle = `Somme des ${metersWithFlow} compteur${metersWithFlow > 1 ? "s" : ""} avec releves (sur ${registryMeters}) — m³/h`;
+  const registrySensorCount = sensors.registry_sensor_count ?? sensorsCatalog.length ?? 0;
+  const registryZoneCount = sensors.registry_zone_count ?? 0;
+  const spacingM = Math.round(sensors.zone_spacing_m || 300);
+  const sensorsWithData = (sensorsCatalog || []).filter((s) => s.has_data || (s.risk_level && s.risk_level !== "offline")).length;
 
   return (
     <div className="page">
@@ -35,14 +52,14 @@ export function DashboardPage() {
           subtitle="Mediane des debits moyens par compteur (m³/h)"
         />
         <KpiCard
-          title="Debit sources SEP"
-          value={formatFlowM3h(meter.sep_sources_flow)}
-          subtitle="Somme des 6 compteurs alimentes par le CSV SEP (m³/h)"
+          title="Debit total reseau"
+          value={formatFlowM3h(meter.network_total_flow ?? meter.sep_sources_flow)}
+          subtitle={totalFlowSubtitle}
         />
         <KpiCard
-          title="Volume consomme (SEP)"
-          value={formatVolumeM3(meter.sep_total_volume)}
-          subtitle="Index cumules des 6 sources sur la periode (m³)"
+          title="Volume cumule reseau"
+          value={formatVolumeM3(meter.total_volume ?? meter.sep_total_volume)}
+          subtitle={`Tous compteurs actifs, periode (m³)`}
         />
         <KpiCard
           title="Capteurs pression"
@@ -60,8 +77,12 @@ export function DashboardPage() {
 
       <VariationChart timeseries={timeseries} />
 
-      <section className="split-grid">
-        <InsightCard title="Tous les compteurs suivis">
+      <section className="split-grid catalog-folds-row">
+        <CollapsibleCatalogCard
+          title="Tous les compteurs suivis"
+          count={mapMeters?.length || registryMeters}
+          hint="Cliquez pour afficher la liste complete du registre."
+        >
           <div className="catalog-grid">
             {(mapMeters || []).map((meter) => (
               <div key={meter.meter_id} className="catalog-item">
@@ -71,20 +92,45 @@ export function DashboardPage() {
             ))}
             {!mapMeters?.length ? <p className="empty-chart">Aucun compteur disponible.</p> : null}
           </div>
-        </InsightCard>
-        <InsightCard title="Tous les capteurs pression">
-          <div className="catalog-grid">
-            {(sensorsCatalog || []).map((sensor) => (
-              <div key={`${sensor.sensor_id}-${sensor.zone}`} className="catalog-item">
-                <strong>{sensor.sensor_id}</strong>
-                <span>{sensor.zone || "Zone non renseignee"}</span>
-              </div>
-            ))}
+        </CollapsibleCatalogCard>
+        <CollapsibleCatalogCard
+          title="Tous les capteurs pression"
+          count={registrySensorCount || sensorsCatalog.length}
+          hint={
+            <>
+              {registryZoneCount} zones · ~{spacingM} m entre capteurs.
+              {sensorsWithData > 0
+                ? ` ${sensorsWithData} avec mesures.`
+                : " En attente de telemetrie."}{" "}
+              <Link to="/dashboard/capteurs">Suivi capteurs</Link>
+            </>
+          }
+        >
+          <div className="catalog-grid catalog-grid--sensors">
+            {(sensorsCatalog || []).map((sensor) => {
+              const risk = sensor.risk_level || sensor.status || "offline";
+              const dotColor = MAP_PATH_BY_RISK[risk]?.fillColor || MAP_PATH_BY_RISK.offline.fillColor;
+              const zoneLabel =
+                sensor.zone_short_name ||
+                (sensor.zone_id != null ? `Zone ${String(sensor.zone_id).padStart(2, "0")}` : sensor.zone);
+              return (
+                <div key={sensor.sensor_id} className={`catalog-item catalog-item--sensor catalog-item--${risk}`}>
+                  <span className="catalog-item-head">
+                    <span className="catalog-item-dot" style={{ background: dotColor }} aria-hidden />
+                    <strong>{sensor.sensor_id}</strong>
+                  </span>
+                  <span>{zoneLabel}</span>
+                  <span className="catalog-item-meta">
+                    {sensorRoleLabel(sensor.role, sensor.sensor_id)} · {riskLabel(risk)}
+                  </span>
+                </div>
+              );
+            })}
             {!sensorsCatalog?.length ? (
-              <p className="empty-chart">Aucun capteur encore ingere. Les capteurs apparaitront des la premiere telemetrie pression.</p>
+              <p className="empty-chart">Aucun capteur dans le registre reseau.</p>
             ) : null}
           </div>
-        </InsightCard>
+        </CollapsibleCatalogCard>
       </section>
 
       <InsightCard title="Comment sont calcules les debits ?">
@@ -93,9 +139,8 @@ export function DashboardPage() {
           − index<sub>ancien</sub>, puis <strong>débit = ΔV / Δt</strong> avec Δt en heures → résultat en{" "}
           <strong>m³/h</strong>. Le debit <em>typique</em> est la <strong>mediane</strong> des debits moyens de chaque
           compteur (hors pics au-dela de {Number(meter.flow_cap_m3h || 2000).toFixed(0)} m³/h). Le debit{" "}
-          <em>sources SEP</em> additionne uniquement les 6 compteurs lies aux colonnes du fichier SEP (mesure directe).
-          Les 16 autres compteurs recoivent une <strong>estimation repartie</strong> : ne pas les additionner aux
-          sources pour eviter un double comptage.
+          <em>total reseau</em> additionne les debits moyens de tous les compteurs du registre qui ont des releves
+          (releves manuels, import CSV ou estimation repartie).
         </p>
       </InsightCard>
 

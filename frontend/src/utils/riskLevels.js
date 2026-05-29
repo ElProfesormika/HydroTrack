@@ -1,3 +1,5 @@
+import { PROBABILITY_BANDS, riskFromProbability } from "./riskThresholds";
+
 /** Couleurs : normal (vert), vigilance (jaune), attention (orange), critique (rouge) */
 export const RISK_COLORS = {
   normal: "#2e7d32",
@@ -33,17 +35,27 @@ export const MAP_LEGEND_ITEMS = [
   { risk: "offline", label: "Hors ligne" },
 ];
 
-export function riskFromLeak(probability) {
-  const p = Number(probability) || 0;
-  if (p >= 0.75) return "critical";
-  if (p >= 0.5) return "warning";
-  if (p >= 0.25) return "caution";
-  return "normal";
-}
+/** Compteurs : couleur = probabilite de fuite ML (ou alerte si pas de ML) */
+export const METER_LEGEND_ITEMS = [
+  ...PROBABILITY_BANDS.map(({ risk, label, range }) => ({
+    risk,
+    label: `${label} (${range})`,
+  })),
+  { risk: "no_data", label: "Sans données" },
+];
 
-export function riskFromScore(score) {
-  return riskFromLeak(score);
-}
+export const METER_MAP_PATH_BY_RISK = {
+  ...MAP_PATH_BY_RISK,
+  no_data: {
+    color: "#546e7a",
+    fillColor: "#cfd8dc",
+    fillOpacity: 0.55,
+    weight: 3,
+    dashArray: "6 4",
+  },
+};
+
+export { riskFromProbability as riskFromLeak, riskFromProbability as riskFromScore } from "./riskThresholds";
 
 export function riskLabel(risk) {
   const labels = {
@@ -52,8 +64,38 @@ export function riskLabel(risk) {
     warning: "Attention",
     critical: "Critique",
     offline: "Hors ligne",
+    no_data: "Sans données",
   };
   return labels[risk] || "Normal";
+}
+
+export const ZONE_LEGEND_ITEMS = [
+  { risk: "normal", label: "Troncon normal" },
+  { risk: "caution", label: "Troncon vigilance" },
+  { risk: "warning", label: "Troncon en analyse" },
+  { risk: "critical", label: "Fuite confirmee" },
+];
+
+/** Troncon zone — vert / jaune / orange / rouge (signal principal sur la carte). */
+export function zoneSegmentPathOptions(risk) {
+  const stroke = RISK_COLORS[risk] || RISK_COLORS.normal;
+  return {
+    color: stroke,
+    weight: risk === "critical" ? 9 : risk === "warning" ? 8 : risk === "caution" ? 7 : 6,
+    opacity: risk === "normal" ? 0.62 : 0.92,
+    lineCap: "round",
+    lineJoin: "round",
+  };
+}
+
+export function sensorBackbonePathOptions() {
+  return {
+    color: "#01579b",
+    weight: 4,
+    opacity: 0.65,
+    lineCap: "round",
+    lineJoin: "round",
+  };
 }
 
 export function markerRadiusForRisk(risk) {
@@ -63,29 +105,45 @@ export function markerRadiusForRisk(risk) {
   return 9;
 }
 
-/** Halo zones sur carte capteurs */
+/** Pastille milieu de troncon — anneau colore selon l'etat du troncon. */
 export function zoneMarkerRadius() {
-  return 17;
+  return 7;
 }
 
 export function zoneMarkerPathOptions(risk) {
-  const base = MAP_PATH_BY_RISK[risk] || MAP_PATH_BY_RISK.normal;
+  const stroke = RISK_COLORS[risk] || RISK_COLORS.normal;
+  const fill = RISK_FILL_BRIGHT[risk] || RISK_FILL_BRIGHT.normal;
   return {
-    ...base,
-    fillColor: RISK_FILL_BRIGHT[risk] || RISK_FILL_BRIGHT.normal,
-    fillOpacity: 0.5,
-    weight: 3,
+    color: stroke,
+    fillColor: fill,
+    fillOpacity: risk === "normal" ? 0.35 : 0.65,
+    weight: risk === "critical" ? 3 : 2.5,
   };
 }
 
+/** Capteurs sur carte : couleur fixe (position), pas le niveau de risque du troncon. */
+export function sensorMapMarkerPathOptions(offline = false) {
+  if (offline) {
+    return { color: "#546e7a", fillColor: "#cfd8dc", fillOpacity: 0.92, weight: 2 };
+  }
+  return { color: "#0d47a1", fillColor: "#90caf9", fillOpacity: 1, weight: 2.5 };
+}
+
+export function sensorMapMarkerRadius() {
+  return 7;
+}
+
 export function pointColorFromLeak(probability) {
-  return RISK_COLORS[riskFromLeak(probability)] || RISK_COLORS.normal;
+  return RISK_COLORS[riskFromProbability(probability)] || RISK_COLORS.normal;
 }
 
 export function barColorFromAvgScore(score) {
-  const s = Number(score) || 0;
-  if (s >= 0.85) return "rgba(198, 40, 40, 0.75)";
-  if (s >= 0.65) return "rgba(239, 108, 0, 0.72)";
-  if (s >= 0.45) return "rgba(249, 168, 37, 0.7)";
-  return "rgba(46, 125, 50, 0.55)";
+  const risk = riskFromProbability(score);
+  const alpha = {
+    normal: "rgba(46, 125, 50, 0.55)",
+    caution: "rgba(249, 168, 37, 0.7)",
+    warning: "rgba(239, 108, 0, 0.72)",
+    critical: "rgba(198, 40, 40, 0.75)",
+  };
+  return alpha[risk] || alpha.normal;
 }

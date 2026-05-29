@@ -1,24 +1,31 @@
 import { CRS } from "leaflet";
 import { useMemo, useRef, useState } from "react";
 import { CircleMarker, ImageOverlay, MapContainer, Popup } from "react-leaflet";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { meterDetailNavigationState, meterDetailUrl } from "../utils/meterRoute";
 import { PlanMapFitBounds } from "./PlanMapFit";
 import { METER_PLAN_POINTS, PLAN_BOUNDS, PLAN_HEIGHT, PLAN_WIDTH } from "./sitePlanCoordinates";
+import { resolveMeterMapRisk } from "../utils/meterMapRisk";
 import {
-  MAP_LEGEND_ITEMS,
-  MAP_PATH_BY_RISK,
+  METER_LEGEND_ITEMS,
+  METER_MAP_PATH_BY_RISK,
   markerRadiusForRisk,
-  riskFromLeak,
   riskLabel,
 } from "../utils/riskLevels";
 
 const PLAN_COMPTEURS_URL = "/plans/edf-plan.jpeg";
 
-const METER_LEGEND_ITEMS = MAP_LEGEND_ITEMS.filter((item) => item.risk !== "offline");
-
 const TOOLTIP_EST_WIDTH = 268;
 const TOOLTIP_EST_HEIGHT = 210;
 const TOOLTIP_EDGE_PAD = 12;
+
+const RISK_SOURCE_LABELS = {
+  ml: "Derniere anomalie ML (table anomalies)",
+  alert: "Alerte active (probabilite dans le message)",
+  alert_level: "Alerte active (niveau severite)",
+  reading: "Releve sans anomalie",
+  none: "Aucune donnee",
+};
 
 function computeTooltipPlacement(x, y, containerWidth, containerHeight) {
   const halfW = TOOLTIP_EST_WIDTH / 2;
@@ -45,23 +52,6 @@ function toMeterImageCoords(meters) {
   });
 }
 
-function latestAnomalyForMeter(meterId, anomalies) {
-  const rows = (anomalies || []).filter((a) => a.meter_id === meterId);
-  if (!rows.length) return null;
-  return rows.reduce((best, cur) => {
-    const tb = new Date(best.timestamp || 0).getTime();
-    const tc = new Date(cur.timestamp || 0).getTime();
-    return tc >= tb ? cur : best;
-  });
-}
-
-function resolveMeterState(meter, anomalies) {
-  const anom = latestAnomalyForMeter(meter.meter_id, anomalies) || meter.latest_anomaly || null;
-  const leakP = anom ? Number(anom.leak_probability || 0) : 0;
-  const risk = meter.risk_level || riskFromLeak(leakP);
-  return { risk, anom, leakP };
-}
-
 function formatDateTime(value) {
   if (!value) return "—";
   const date = new Date(value);
@@ -75,32 +65,71 @@ function formatDateTime(value) {
   });
 }
 
-function MeterHoverTooltip({ meter, risk, anom, leakP }) {
-  const stateDate = anom?.timestamp ? formatDateTime(anom.timestamp) : formatDateTime(meter.last_reading_at);
-  const stateLabel = riskLabel(risk);
+function formatPercent(probability) {
+  if (probability == null || Number.isNaN(Number(probability))) return "—";
+  return `${Math.round(Number(probability) * 100)} %`;
+}
+
+function MeterHoverTooltip({
+  meter,
+  risk,
+  riskLabelText,
+  anom,
+  alert,
+  displayProbability,
+  anomalyScore,
+  hasData,
+  riskSource,
+}) {
+  const stateDate = alert?.timestamp
+    ? formatDateTime(alert.timestamp)
+    : anom?.timestamp
+      ? formatDateTime(anom.timestamp)
+      : formatDateTime(meter.last_reading_at);
 
   return (
     <div className="map-tooltip-inner">
       <strong>{meter.name}</strong>
       <span className="map-tooltip-id">{meter.meter_id}</span>
-      <p className={`map-tooltip-risk map-tooltip-risk--${risk}`}>{stateLabel}</p>
+      <p className={`map-tooltip-risk map-tooltip-risk--${risk}`}>{riskLabelText}</p>
       <dl className="map-tooltip-meta">
-        <div>
-          <dt>Etat au</dt>
-          <dd>{stateDate}</dd>
-        </div>
-        {anom ? (
+        {!hasData ? (
+          <div>
+            <dt>Donnees</dt>
+            <dd>Aucun releve, anomalie ni alerte active</dd>
+          </div>
+        ) : (
           <>
             <div>
-              <dt>Score anomalie</dt>
-              <dd>{Number(anom.score || 0).toFixed(2)}</dd>
+              <dt>Prob. fuite affichee</dt>
+              <dd>{formatPercent(displayProbability)}</dd>
             </div>
             <div>
-              <dt>Prob. fuite</dt>
-              <dd>{Math.round(leakP * 100)} %</dd>
+              <dt>Source</dt>
+              <dd>{RISK_SOURCE_LABELS[riskSource] || riskSource}</dd>
+            </div>
+            {anomalyScore != null ? (
+              <div>
+                <dt>Score technique ML</dt>
+                <dd>
+                  {Number(anomalyScore).toFixed(1)} / 100 <span className="map-tooltip-hint-inline">(indice, pas la prob.)</span>
+                </dd>
+              </div>
+            ) : null}
+            {alert ? (
+              <>
+                <div>
+                  <dt>Alerte</dt>
+                  <dd>{alert.message}</dd>
+                </div>
+              </>
+            ) : null}
+            <div>
+              <dt>Mise a jour</dt>
+              <dd>{stateDate}</dd>
             </div>
           </>
-        ) : null}
+        )}
         {meter.last_reading_at ? (
           <>
             <div>
@@ -110,10 +139,6 @@ function MeterHoverTooltip({ meter, risk, anom, leakP }) {
             <div>
               <dt>Debit</dt>
               <dd>{Number(meter.last_flow_rate || 0).toFixed(2)} m³/h</dd>
-            </div>
-            <div>
-              <dt>Volume</dt>
-              <dd>{Number(meter.last_volume || 0).toFixed(2)} m³</dd>
             </div>
           </>
         ) : null}
@@ -126,13 +151,14 @@ function MeterHoverTooltip({ meter, risk, anom, leakP }) {
 export function MeterMapPanel({
   meters,
   anomalies,
+  alerts = [],
   title = "Carte des compteurs reseau",
-  caption = "Survolez un point pour les infos. Couleur selon l'etat ML. Clic pour le suivi detaille.",
+  caption = "Prob. fuite ML (0-1) : < 25 % vert · 25-49 % jaune · 50-74 % orange · ≥ 75 % rouge. Valeur renvoyee par /api/map/meters.",
 }) {
   const navigate = useNavigate();
   const mapWrapRef = useRef(null);
   const [hoverTip, setHoverTip] = useState(null);
-  const metersImageCoords = toMeterImageCoords(meters || []);
+  const metersImageCoords = useMemo(() => toMeterImageCoords(meters || []), [meters]);
 
   const tooltipPlacement = useMemo(() => {
     if (!hoverTip || !mapWrapRef.current) return null;
@@ -141,7 +167,9 @@ export function MeterMapPanel({
   }, [hoverTip]);
 
   const openMeterDetail = (meterId) => {
-    navigate(`/dashboard/compteurs?meter=${encodeURIComponent(meterId)}`);
+    navigate(meterDetailUrl(meterId), {
+      state: meterDetailNavigationState("/cartographie"),
+    });
   };
 
   const showHoverTip = (event, meter, state) => {
@@ -157,10 +185,13 @@ export function MeterMapPanel({
     <section className="card map-panel map-panel--meters">
       <h3>{title}</h3>
       {caption ? <p className="map-caption">{caption}</p> : null}
-      <ul className="map-risk-legend" aria-label="Legende des couleurs">
+      <ul className="map-risk-legend" aria-label="Legende des couleurs compteurs">
         {METER_LEGEND_ITEMS.map(({ risk, label }) => (
           <li key={risk}>
-            <span className="map-risk-legend-dot" style={{ background: MAP_PATH_BY_RISK[risk].fillColor }} />
+            <span
+              className={`map-risk-legend-dot ${risk === "no_data" ? "map-risk-legend-dot--nodata" : ""}`}
+              style={{ background: METER_MAP_PATH_BY_RISK[risk]?.fillColor }}
+            />
             {label}
           </li>
         ))}
@@ -179,25 +210,51 @@ export function MeterMapPanel({
           <PlanMapFitBounds bounds={PLAN_BOUNDS} mode="cover" />
           <ImageOverlay url={PLAN_COMPTEURS_URL} bounds={PLAN_BOUNDS} />
           {metersImageCoords.map((m) => {
-            const { risk, anom, leakP } = resolveMeterState(m, anomalies);
-            const opts = MAP_PATH_BY_RISK[risk] || MAP_PATH_BY_RISK.normal;
+            const state = resolveMeterMapRisk(m, anomalies, alerts);
+            const {
+              risk,
+              anom,
+              alert,
+              displayProbability,
+              anomalyScore,
+              hasData,
+              riskLabel: riskLabelText,
+              riskSource,
+            } = state;
+            const opts = METER_MAP_PATH_BY_RISK[risk] || METER_MAP_PATH_BY_RISK.normal;
+            const radius = risk === "no_data" ? 10 : markerRadiusForRisk(risk);
             return (
               <CircleMarker
-                key={m.id}
+                key={`${m.meter_id}-${risk}-${displayProbability ?? "na"}`}
                 center={[m.y, m.x]}
-                radius={markerRadiusForRisk(risk)}
+                radius={radius}
                 pathOptions={opts}
+                className={risk === "no_data" ? "map-meter--nodata" : `map-meter--${risk}`}
                 eventHandlers={{
-                  mouseover: (e) => showHoverTip(e, m, { risk, anom, leakP }),
+                  mouseover: (e) => showHoverTip(e, m, state),
                   mouseout: hideHoverTip,
                   click: () => openMeterDetail(m.meter_id),
                 }}
               >
                 <Popup>
-                  <MeterHoverTooltip meter={m} risk={risk} anom={anom} leakP={leakP} />
-                  <button type="button" className="map-popup-link" onClick={() => openMeterDetail(m.meter_id)}>
+                  <MeterHoverTooltip
+                    meter={m}
+                    risk={risk}
+                    riskLabelText={riskLabelText}
+                    anom={anom}
+                    alert={alert}
+                    displayProbability={displayProbability}
+                    anomalyScore={anomalyScore}
+                    hasData={hasData}
+                    riskSource={riskSource}
+                  />
+                  <Link
+                    to={meterDetailUrl(m.meter_id)}
+                    state={meterDetailNavigationState("/cartographie")}
+                    className="map-popup-link"
+                  >
                     Voir suivi detaille
-                  </button>
+                  </Link>
                 </Popup>
               </CircleMarker>
             );
@@ -213,8 +270,13 @@ export function MeterMapPanel({
             <MeterHoverTooltip
               meter={hoverTip.meter}
               risk={hoverTip.risk}
+              riskLabelText={hoverTip.riskLabel}
               anom={hoverTip.anom}
-              leakP={hoverTip.leakP}
+              alert={hoverTip.alert}
+              displayProbability={hoverTip.displayProbability}
+              anomalyScore={hoverTip.anomalyScore}
+              hasData={hoverTip.hasData}
+              riskSource={hoverTip.riskSource}
             />
           </div>
         ) : null}

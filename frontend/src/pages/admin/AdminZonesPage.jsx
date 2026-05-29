@@ -3,6 +3,11 @@ import { adminApi } from "../../services/adminApi";
 import { AdminPageHeader } from "../../components/AdminPageHeader";
 import { AdminPlanPicker, pointsFromMeters, pointsFromZones } from "../../components/admin/AdminPlanPicker";
 import { wasDeleteCancelled } from "../../utils/confirmDelete";
+import {
+  buildMeterLookup,
+  resolveZonePlanXY,
+  segmentForZone,
+} from "../../utils/planCoordinates";
 
 const EMPTY_ZONE = {
   zone_id: "",
@@ -16,25 +21,30 @@ const EMPTY_ZONE = {
 export function AdminZonesPage() {
   const [zones, setZones] = useState([]);
   const [meters, setMeters] = useState([]);
+  const [sensors, setSensors] = useState([]);
   const [segments, setSegments] = useState([]);
   const [error, setError] = useState("");
   const [zoneForm, setZoneForm] = useState(EMPTY_ZONE);
   const [segEdit, setSegEdit] = useState(null);
 
   const load = useCallback(async () => {
-    const [z, s, m] = await Promise.all([
+    const [z, s, m, sen] = await Promise.all([
       adminApi.listZones(true),
       adminApi.listSegments(),
       adminApi.listMeters(true),
+      adminApi.listSensors(true),
     ]);
     setZones(z.items || []);
     setSegments(s.items || []);
     setMeters(m.items || []);
+    setSensors(sen.items || []);
   }, []);
 
   useEffect(() => {
     load().catch((e) => setError(e.message));
   }, [load]);
+
+  const meterLookup = buildMeterLookup(meters);
 
   function setPlanCoords(x, y) {
     setZoneForm((f) => ({ ...f, plan_x: x, plan_y: y }));
@@ -42,18 +52,33 @@ export function AdminZonesPage() {
 
   async function saveZone(e) {
     e.preventDefault();
-    if (zoneForm.plan_x === "" || zoneForm.plan_y === "") {
-      setError("Cliquez sur le plan pour definir la position de la zone.");
-      return;
+    setError("");
+    const meterLookup = buildMeterLookup(meters);
+    const zid = Number(zoneForm.zone_id);
+    const zoneSensors = sensors.filter((s) => Number(s.zone_id) === zid);
+    let planX = zoneForm.plan_x;
+    let planY = zoneForm.plan_y;
+    if (planX === "" || planY === "") {
+      const derived = resolveZonePlanXY(
+        { zone_id: zid, plan_x: null, plan_y: null },
+        segments,
+        meterLookup,
+        zoneSensors.length ? zoneSensors : sensors
+      );
+      if (!zoneSensors.length && derived.x === 500 && derived.y === 500) {
+        setError("Ajoutez des capteurs a la zone ou cliquez sur le plan.");
+        return;
+      }
+      planX = derived.x;
+      planY = derived.y;
     }
     try {
-      setError("");
       await adminApi.createZone({
         zone_id: Number(zoneForm.zone_id),
         name: zoneForm.name,
         short_name: zoneForm.short_name,
-        plan_x: Number(zoneForm.plan_x),
-        plan_y: Number(zoneForm.plan_y),
+        plan_x: Number(planX),
+        plan_y: Number(planY),
         active: zoneForm.active,
       });
       setZoneForm(EMPTY_ZONE);
@@ -97,7 +122,7 @@ export function AdminZonesPage() {
     <div className="admin-page">
       <AdminPageHeader
         title="Zones & troncons"
-        description="Placez la zone sur le plan capteurs (~300 m entre points), puis renseignez l'identifiant et le nom."
+        description="Position de la zone : centre des capteurs de la zone (recalculee automatiquement si capteurs presents)."
       />
       {error ? <p className="error-box">{error}</p> : null}
 
@@ -138,7 +163,7 @@ export function AdminZonesPage() {
             planY={zoneForm.plan_y}
             onChange={setPlanCoords}
             existingPoints={[...pointsFromZones(zones), ...pointsFromMeters(meters)]}
-            title="Cliquez pour placer la zone"
+            title="Clic manuel ou centre des capteurs de la zone"
           />
         </form>
       </section>
@@ -232,12 +257,17 @@ export function AdminZonesPage() {
               </tr>
             </thead>
             <tbody>
-              {zones.map((z) => (
+              {zones.map((z) => {
+                const pt = resolveZonePlanXY(z, segments, meterLookup, sensors);
+                const zoneSensors = sensors.filter((s) => Number(s.zone_id) === Number(z.zone_id));
+                const fromSensors = zoneSensors.length > 0;
+                return (
                 <tr key={z.zone_id}>
                   <td>{z.zone_id}</td>
                   <td>{z.name}</td>
                   <td>
-                    {z.plan_x != null ? `${Number(z.plan_x).toFixed(0)}, ${Number(z.plan_y).toFixed(0)}` : "—"}
+                    {`${pt.x.toFixed(0)}, ${pt.y.toFixed(0)}`}
+                    {fromSensors ? <span className="admin-coord-hint"> (capteurs)</span> : null}
                   </td>
                   <td>{z.active ? "Oui" : "Non"}</td>
                   <td className="admin-row-actions">
@@ -249,7 +279,8 @@ export function AdminZonesPage() {
                     </button>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

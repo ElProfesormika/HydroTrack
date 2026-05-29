@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
+import { readMeterFromSearch } from "../utils/meterRoute";
 
 import { DashboardHeader } from "../components/DashboardHeader";
 import { EventList } from "../components/EventList";
@@ -15,6 +16,7 @@ import { useRealtimeDashboard } from "../hooks/useRealtimeDashboard";
 import { formatFlowM3h, formatVolumeM3 } from "../utils/formatUnits";
 
 export function DashboardCompteursPage() {
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const deepDiveRef = useRef(null);
   const scrolledFromMapRef = useRef(false);
@@ -29,22 +31,28 @@ export function DashboardCompteursPage() {
     selectedMeterProfile,
     isConnected,
     error,
+    isLoading,
     refresh,
     setSelectedMeter,
   } = useRealtimeDashboard();
   const meter = overview?.meter_kpis || {};
   const topMeters = overview?.top_anomalous_meters || [];
   const meterOptions = (mapMeters || []).map((m) => m.meter_id).filter(Boolean);
-  const meterFromUrl = searchParams.get("meter");
+  const metersWithFlow = meter.meters_with_flow ?? meter.distinct_meters ?? 0;
+  const registryMeters = meter.registry_meter_count ?? mapMeters?.length ?? 0;
+  const totalFlowSubtitle = `Somme des ${metersWithFlow} compteur${metersWithFlow > 1 ? "s" : ""} avec releves (sur ${registryMeters}) — m³/h`;
+  const meterFromUrl = readMeterFromSearch(searchParams.toString());
+  const backTo = location.state?.backTo;
+  const unknownMeterFromUrl =
+    Boolean(meterFromUrl) && meterOptions.length > 0 && !meterOptions.includes(meterFromUrl);
 
   useEffect(() => {
-    if (!meterFromUrl || !meterOptions.length) return;
-    if (!meterOptions.includes(meterFromUrl)) return;
+    if (!meterFromUrl) return;
     if (meterFromUrl !== selectedMeterId) {
       scrolledFromMapRef.current = false;
       setSelectedMeter(meterFromUrl);
     }
-  }, [meterFromUrl, meterOptions, selectedMeterId, setSelectedMeter]);
+  }, [meterFromUrl, selectedMeterId, setSelectedMeter]);
 
   useEffect(() => {
     if (!meterFromUrl || !selectedMeterProfile || scrolledFromMapRef.current) return;
@@ -64,9 +72,22 @@ export function DashboardCompteursPage() {
         title="Suivi compteurs"
         description="Pilotage detaille des debits, volumes et signaux de risque pour chaque compteur avec classification ML uniforme."
         isConnected={isConnected}
+        backTo={backTo}
       />
 
+      {isLoading && !overview ? (
+        <p className="map-caption" role="status">
+          Chargement des donnees compteurs…
+        </p>
+      ) : null}
+
       {error ? <p className="error-box">{error}</p> : null}
+      {unknownMeterFromUrl ? (
+        <p className="error-box" role="status">
+          Compteur « {meterFromUrl} » introuvable dans le registre actif. Choisissez un compteur dans la liste
+          ci-dessous.
+        </p>
+      ) : null}
 
       <article className="card releves-promo-card">
         <h3>Saisie des releves</h3>
@@ -82,9 +103,9 @@ export function DashboardCompteursPage() {
         <KpiCard title="Compteurs distincts" value={meter.distinct_meters || 0} subtitle="Identifiants actifs" />
         <KpiCard title="Points télémetrie" value={meter.total_points || 0} subtitle="Mesures enregistrées" />
         <KpiCard title="Debit moyen (typique)" value={formatFlowM3h(meter.avg_flow)} subtitle="Mediane par compteur (m³/h)" />
-        <KpiCard title="Debit sources SEP" value={formatFlowM3h(meter.sep_sources_flow)} subtitle="6 compteurs CSV (m³/h)" />
+        <KpiCard title="Debit total reseau" value={formatFlowM3h(meter.network_total_flow ?? meter.sep_sources_flow)} subtitle={totalFlowSubtitle} />
         <KpiCard title="Debit max (filtre)" value={formatFlowM3h(meter.max_flow)} subtitle="Hors pics aberrants" />
-        <KpiCard title="Volume SEP" value={formatVolumeM3(meter.sep_total_volume)} subtitle="6 sources, periode (m³)" />
+        <KpiCard title="Volume cumule reseau" value={formatVolumeM3(meter.total_volume ?? meter.sep_total_volume)} subtitle="Tous compteurs actifs, periode (m³)" />
       </section>
 
       <section className="split-grid charts-two-debit">

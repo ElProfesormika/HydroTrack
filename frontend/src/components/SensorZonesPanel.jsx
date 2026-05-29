@@ -1,3 +1,5 @@
+import { LocalizationPhysicsDetail } from "./LeakPhysicsPanel";
+
 function statusLabel(status) {
   const labels = {
     confirmed: "Fuite confirmee",
@@ -35,13 +37,17 @@ export function SensorZonesPanel({ zones, networkKm = "10.0", zoneSpacingM = 300
     <section className="card sensor-zones-panel">
       <h3>Zones capteurs entre compteurs ({zones.length})</h3>
       <p className="map-caption">
-        Reseau ~{networkKm} km : une zone tous les ~{zoneSpacingM} m (2 capteurs pression par zone). En cas
-        d&apos;alerte compteur, les capteurs confirment la fuite puis estiment la distance depuis le compteur amont.
+        Reseau ~{networkKm} km : une zone tous les ~{zoneSpacingM} m (2 capteurs pression par troncon).
+        En cas d&apos;alerte compteur, les capteurs detectent l&apos;onde transitoire, confirment la fuite
+        puis estiment le point x = (L + c·Δt) / 2 et la zone estimee R autour de x.
       </p>
       <div className="zone-cards-grid">
         {zones.map((zone) => {
           const loc = zone.latest_localization;
           const confirmed = zone.confirmation_status === "confirmed";
+          const seg = zone.segment;
+          const wave = seg?.wave_speed_m_s ?? seg?.wave_physics?.wave_speed_m_s;
+
           return (
             <article
               key={zone.zone_id}
@@ -54,8 +60,16 @@ export function SensorZonesPanel({ zones, networkKm = "10.0", zoneSpacingM = 300
                 </span>
               </header>
               <p className="zone-card-segment">
-                Troncon : {zone.segment?.upstream_meter} → {zone.segment?.downstream_meter} (
-                {zone.segment?.length_m} m)
+                Troncon : {seg?.upstream_meter} → {seg?.downstream_meter} ({seg?.length_m} m)
+                {wave != null ? (
+                  <>
+                    <br />
+                    <span className="zone-card-wave">
+                      c ≈ {Number(wave).toFixed(0)} m/s
+                      {seg?.pipe_material_label ? ` · ${seg.pipe_material_label}` : ""}
+                    </span>
+                  </>
+                ) : null}
               </p>
               {zone.pending_meter ? (
                 <p className="zone-card-alert">
@@ -73,20 +87,18 @@ export function SensorZonesPanel({ zones, networkKm = "10.0", zoneSpacingM = 300
                     {s.intensity != null ? (
                       <span className="zone-sensor-metric">I={Number(s.intensity).toFixed(0)}</span>
                     ) : null}
+                    {s.frequency != null ? (
+                      <span className="zone-sensor-metric">f={Number(s.frequency).toFixed(1)} Hz</span>
+                    ) : null}
                   </li>
                 ))}
               </ul>
               {confirmed && loc ? (
-                <div className="zone-localization">
-                  <strong>Localisation</strong>
-                  <p>
-                    {Number(loc.distance_m_from_upstream || 0).toFixed(0)} m depuis {loc.upstream_meter}
-                    <br />
-                    Confiance : {Math.round(Number(loc.localization_confidence || 0) * 100)} %
-                  </p>
-                </div>
+                <LocalizationPhysicsDetail localization={loc} segment={seg} />
               ) : (
-                <p className="zone-card-score">Score capteurs max : {Number(zone.max_sensor_score || 0).toFixed(2)}</p>
+                <p className="zone-card-score">
+                  Score onde transitoire max : {Number(zone.max_sensor_score || 0).toFixed(2)}
+                </p>
               )}
             </article>
           );

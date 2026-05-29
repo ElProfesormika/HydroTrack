@@ -1,6 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AdminAuthProvider } from "./context/AdminAuthContext";
-import { AppLayout } from "./layout/AppLayout";
+import { withAppLayout } from "./layout/withAppLayout";
 import { AdminLayout } from "./layout/AdminLayout";
 import { DashboardAlertesPage } from "./pages/DashboardAlertesPage";
 import { DashboardCapteursPage } from "./pages/DashboardCapteursPage";
@@ -17,6 +17,14 @@ import { AdminMetersPage } from "./pages/admin/AdminMetersPage";
 import { AdminSensorsPage } from "./pages/admin/AdminSensorsPage";
 import { AdminZonesPage } from "./pages/admin/AdminZonesPage";
 
+const Dashboard = withAppLayout(DashboardPage);
+const Compteurs = withAppLayout(DashboardCompteursPage);
+const Releves = withAppLayout(RelevesPage);
+const Capteurs = withAppLayout(DashboardCapteursPage);
+const Alertes = withAppLayout(DashboardAlertesPage);
+const Detection = withAppLayout(DashboardDetectionPage);
+const Cartographie = withAppLayout(MapPage);
+
 export default function App() {
   return (
     <AdminAuthProvider>
@@ -31,23 +39,16 @@ export default function App() {
           <Route path="fuites" element={<AdminLeaksPage />} />
         </Route>
 
-        <Route
-          path="/*"
-          element={
-            <AppLayout>
-              <Routes>
-                <Route path="/" element={<Navigate to="/dashboard" replace />} />
-                <Route path="/dashboard" element={<DashboardPage />} />
-                <Route path="/dashboard/compteurs" element={<DashboardCompteursPage />} />
-                <Route path="/releves" element={<RelevesPage />} />
-                <Route path="/dashboard/capteurs" element={<DashboardCapteursPage />} />
-                <Route path="/dashboard/alertes" element={<DashboardAlertesPage />} />
-                <Route path="/dashboard/detection" element={<DashboardDetectionPage />} />
-                <Route path="/cartographie" element={<MapPage />} />
-              </Routes>
-            </AppLayout>
-          }
-        />
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/dashboard/compteurs" element={<Compteurs />} />
+        <Route path="/releves" element={<Releves />} />
+        <Route path="/dashboard/capteurs" element={<Capteurs />} />
+        <Route path="/dashboard/alertes" element={<Alertes />} />
+        <Route path="/dashboard/detection" element={<Detection />} />
+        <Route path="/cartographie" element={<Cartographie />} />
+
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </AdminAuthProvider>
   );

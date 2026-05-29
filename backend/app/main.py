@@ -200,6 +200,11 @@ def get_zone_sensors_status() -> dict:
     return {"count": len(items), "items": items}
 
 
+@app.get("/api/dashboard/wave-physics")
+def get_wave_physics_reference() -> dict:
+    return store.get_wave_physics_reference()
+
+
 @app.get("/api/network/topology")
 def get_network_topology() -> dict:
     return store.get_network_topology()
