@@ -61,6 +61,8 @@ async def create_meter_reading(payload: MeterReadingIn) -> dict:
         result = store.create_meter_reading(payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Erreur ML/releve: {exc}") from exc
     await _broadcast({"type": "meter_reading", "action": "created", "reading": result["reading"]})
     return {"status": "created", **result}
 
@@ -71,6 +73,8 @@ async def update_meter_reading(reading_id: int, payload: MeterReadingUpdate) -> 
         result = store.update_meter_reading(reading_id, payload)
     except ValueError as exc:
         raise HTTPException(status_code=404 if "introuvable" in str(exc) else 400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Erreur ML/releve: {exc}") from exc
     await _broadcast({"type": "meter_reading", "action": "updated", "reading": result["reading"]})
     return {"status": "updated", **result}
 

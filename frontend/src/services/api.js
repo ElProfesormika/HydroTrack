@@ -5,7 +5,7 @@ const API_BASE = (import.meta.env.VITE_API_BASE || "").replace(/\/$/, "");
 
 function networkError(path, cause) {
   const hint =
-    "Verifiez que le backend est demarre (port 8000) : cd backend && .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000";
+    "Verifiez que le backend est demarre (port 8001 si 8000 occupe) : cd backend && source .venv/bin/activate && uvicorn app.main:app --reload --host 0.0.0.0 --port 8001";
   return new Error(`Connexion impossible vers ${path}. ${hint}`, { cause });
 }
 

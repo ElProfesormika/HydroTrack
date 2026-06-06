@@ -13,9 +13,14 @@ except Exception:  # pragma: no cover
     IsolationForest = None
 
 
+def flow_rate_to_daily_consumption(flow_rate_m3h: float) -> float:
+    """Convertit un débit m³/h en consommation journalière (m³/j), comme ``conso_jour`` du notebook IA."""
+    return max(float(flow_rate_m3h), 0.0) * 24.0
+
+
 class MeterAnomalyEngine:
     """Aligné sur `hydrotrack_modele_ia.py` :
-    ``IsolationForest(n_estimators=300)`` sur ``log1p(débit)``,
+    ``IsolationForest(n_estimators=300)`` sur ``log1p(conso_jour)``,
     puis niveaux JAUNE / ORANGE / ROUGE à partir des quantiles du ``decision_function``
     par compteur (scores les plus faibles = le plus aberrant).
 
@@ -36,9 +41,50 @@ class MeterAnomalyEngine:
         arr = np.asarray(data, dtype=np.float64)
         return float(np.quantile(arr, p))
 
-    def score(self, meter_id: str, flow_rate: float) -> tuple[float, float]:
+    def reset_meter(self, meter_id: str) -> None:
+        if meter_id in self.values:
+            self.values[meter_id].clear()
+        if meter_id in self.decisions:
+            self.decisions[meter_id].clear()
+        self.models.pop(meter_id, None)
+
+    def bootstrap_from_flow_rates(self, meter_id: str, flow_rates_m3h: list[float]) -> None:
+        """Charge l'historique en une passe (un seul fit par compteur) pour un démarrage rapide."""
+        self.reset_meter(meter_id)
+        if not flow_rates_m3h:
+            return
+
+        series_deque = self.values[meter_id]
+        for rate in flow_rates_m3h:
+            daily = flow_rate_to_daily_consumption(rate)
+            series_deque.append(math.log1p(daily))
+
+        series = list(series_deque)
+        if len(series) < 18 or IsolationForest is None:
+            return
+
+        model = IsolationForest(n_estimators=self.n_trees, contamination="auto", random_state=42)
+        x_data = [[v] for v in series]
+        model.fit(x_data)
+        self.models[meter_id] = model
+
+        for raw in model.decision_function(x_data):
+            self.decisions[meter_id].append(float(raw))
+
+    def score(
+        self,
+        meter_id: str,
+        flow_rate_m3h: float | None = None,
+        *,
+        flow_rate: float | None = None,
+    ) -> tuple[float, float]:
+        rate = flow_rate_m3h if flow_rate_m3h is not None else flow_rate
+        if rate is None:
+            raise TypeError("score() requires flow_rate_m3h (positional) or flow_rate= (keyword)")
+
         series = self.values[meter_id]
-        value = math.log1p(max(flow_rate, 0.0))
+        daily = flow_rate_to_daily_consumption(rate)
+        value = math.log1p(daily)
         series.append(value)
 
         if len(series) < 8:

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .admin_store import AdminStore
+from .meter_flow import flow_rate_from_index, parse_ts
 from .ml import MeterAnomalyEngine
 from .models import Alert, Anomaly, MeterDataIn, MeterReadingIn, MeterReadingUpdate, NetworkState, PressureDataIn
 from .persistence import SQLiteStore
@@ -112,36 +113,6 @@ def _zone_map_risk(confirmation: str, max_score: float) -> str:
     return _risk_from_score(max_score)
 
 
-_MIN_READING_HOURS = 1.0
-_MAX_READING_FLOW_M3H = 2000.0
-
-
-def _parse_ts(value: str | datetime) -> datetime:
-    if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-    raw = str(value).replace("Z", "+00:00")
-    parsed = datetime.fromisoformat(raw)
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
-
-
-def _flow_rate_from_index(
-    index_m3: float,
-    timestamp: datetime,
-    previous: dict[str, Any] | None,
-) -> float:
-    """Debit m3/h = (index - index_precedent) / delta_t (h). Premier releve -> 0."""
-    if not previous:
-        return 0.0
-    prev_index = float(previous.get("volume") or 0)
-    prev_ts = _parse_ts(previous["timestamp"])
-    ts = timestamp if timestamp.tzinfo else timestamp.replace(tzinfo=timezone.utc)
-    delta = index_m3 - prev_index
-    if delta < 0:
-        delta = index_m3
-    hours = max((ts - prev_ts).total_seconds() / 3600.0, _MIN_READING_HOURS)
-    return round(min(delta / hours, _MAX_READING_FLOW_M3H), 4)
-
-
 class InMemoryStore:
     def __init__(self, max_items: int = 500) -> None:
         self.meter_data: deque[MeterDataIn] = deque(maxlen=max_items)
@@ -153,10 +124,115 @@ class InMemoryStore:
         self.sqlite = SQLiteStore(Path(__file__).resolve().parents[1] / "data" / "hydrotrack.db")
         self.registry = NetworkRegistry()
         self.admin = AdminStore(self.sqlite, self.registry)
+        self.sqlite.delete_orphan_anomalies()
+        self.sqlite.dedupe_anomalies()
+        self._warmup_ml_from_db()
+        self._rescore_stale_ml_outputs()
+
+    def _meter_flow_rates_for_ml(
+        self,
+        meter_id: str,
+        *,
+        exclude_row_id: int | None = None,
+    ) -> list[float]:
+        rows = self.sqlite.get_meter_flow_history(
+            meter_id,
+            limit=self.ml_engine.window_size,
+            exclude_row_id=exclude_row_id,
+        )
+        return [float(r.get("flow_rate") or 0.0) for r in rows]
+
+    def _recalculate_meter_flows_after(self, meter_id: str, from_timestamp: datetime) -> None:
+        """Recalcule les debits des releves posterieurs (dates / index modifies)."""
+        rows = self.sqlite.list_meter_data_chronological(meter_id)
+        prev: dict[str, Any] | None = None
+        from_ts = parse_ts(from_timestamp)
+        for row in rows:
+            ts = parse_ts(row["timestamp"])
+            if ts < from_ts:
+                prev = {"volume": row["volume"], "timestamp": row["timestamp"]}
+                continue
+            flow = flow_rate_from_index(float(row["volume"]), ts, prev)
+            if float(row.get("flow_rate") or 0) != flow:
+                self.sqlite.update_meter_data_flow(int(row["id"]), flow)
+            prev = {"volume": row["volume"], "timestamp": row["timestamp"]}
+
+    def _apply_ml_for_meter_point(self, payload: MeterDataIn) -> dict[str, Any]:
+        """Recharge l'historique anterieur a la date du releve, puis score ce point."""
+        payload_ts = parse_ts(payload.timestamp)
+        ts_iso = payload_ts.isoformat()
+        prior_rows = self.sqlite.get_meter_flow_history_before(
+            payload.meter_id,
+            ts_iso,
+            limit=self.ml_engine.window_size,
+        )
+        prior_rates = [float(r.get("flow_rate") or 0.0) for r in prior_rows]
+
+        row = self.sqlite.get_meter_data_at_timestamp(payload.meter_id, ts_iso)
+        current_flow = float(row["flow_rate"]) if row else float(payload.flow_rate)
+        volume = float(row["volume"]) if row else float(payload.volume)
+
+        self.ml_engine.bootstrap_from_flow_rates(payload.meter_id, prior_rates)
+        scoring = MeterDataIn(
+            timestamp=payload_ts,
+            meter_id=payload.meter_id,
+            volume=volume,
+            flow_rate=current_flow,
+        )
+        return self._process_meter_ml(scoring)
+
+    def _rescore_stale_ml_outputs(self) -> None:
+        """Recalcule scores/alertes laisses a 0 faute d'historique au moment de la saisie."""
+        seen: set[tuple[str, str]] = set()
+        targets: list[MeterDataIn] = []
+
+        for row in self.sqlite.list_manual_readings_for_ml():
+            meter_id = str(row["meter_id"])
+            ts = parse_ts(row["timestamp"])
+            key = (meter_id, ts.isoformat())
+            if key in seen:
+                continue
+            seen.add(key)
+            flow = float(row.get("flow_rate") or 0.0)
+            if row.get("meter_data_id"):
+                md = self.sqlite.get_meter_data_row(int(row["meter_data_id"]))
+                if md:
+                    flow = float(md.get("flow_rate") or flow)
+            targets.append(
+                MeterDataIn(
+                    timestamp=ts,
+                    meter_id=meter_id,
+                    volume=float(row.get("volume") or 0.0),
+                    flow_rate=flow,
+                )
+            )
+
+        for payload in targets:
+            self._apply_ml_for_meter_point(payload)
+
+    def _rescore_latest_meter_point(self, meter_id: str) -> None:
+        history = self.sqlite.get_meter_flow_history(meter_id, limit=1)
+        if not history:
+            self.ml_engine.reset_meter(meter_id)
+            return
+        row = history[-1]
+        payload = MeterDataIn(
+            timestamp=parse_ts(row["timestamp"]),
+            meter_id=meter_id,
+            volume=float(row.get("volume") or 0.0),
+            flow_rate=float(row.get("flow_rate") or 0.0),
+        )
+        self._apply_ml_for_meter_point(payload)
+
+    def _warmup_ml_from_db(self) -> None:
+        for meter_id in self.registry.meter_ids:
+            rates = self._meter_flow_rates_for_ml(meter_id)
+            if rates:
+                self.ml_engine.bootstrap_from_flow_rates(meter_id, rates)
 
     def _process_meter_ml(self, payload: MeterDataIn) -> dict[str, Any]:
         anomaly_score, leak_probability = self.ml_engine.score(
-            meter_id=payload.meter_id, flow_rate=payload.flow_rate
+            payload.meter_id, payload.flow_rate
         )
 
         anomaly = Anomaly(
@@ -187,8 +263,7 @@ class InMemoryStore:
                     f"(probabilite={leak_probability:.0%}) — confirmation capteurs en attente"
                 ),
             )
-            self.alerts.append(alert)
-            self.sqlite.insert_alert(alert)
+            self._emit_ml_alert(alert)
         elif leak_probability >= LEAK_PROB_WARNING:
             alert = Alert(
                 timestamp=payload.timestamp,
@@ -200,8 +275,7 @@ class InMemoryStore:
                     f"(probabilite={leak_probability:.0%})"
                 ),
             )
-            self.alerts.append(alert)
-            self.sqlite.insert_alert(alert)
+            self._emit_ml_alert(alert)
         elif leak_probability >= LEAK_PROB_CAUTION:
             alert = Alert(
                 timestamp=payload.timestamp,
@@ -213,14 +287,17 @@ class InMemoryStore:
                     f"(probabilite={leak_probability:.0%})"
                 ),
             )
-            self.alerts.append(alert)
-            self.sqlite.insert_alert(alert)
+            self._emit_ml_alert(alert)
 
         return {
             "anomaly_score": round(anomaly_score, 2),
             "leak_probability": round(leak_probability, 2),
             "ml_model": "IsolationForest(n=300)+seuils quantiles decision (HydroTrack IA)",
         }
+
+    def _emit_ml_alert(self, alert: Alert) -> None:
+        self.alerts.append(alert)
+        self.sqlite.upsert_ml_alert(alert)
 
     def _segment_payload(self, seg: dict[str, Any]) -> dict[str, Any]:
         from .wave_propagation import wave_speed_for_segment
@@ -251,16 +328,32 @@ class InMemoryStore:
     def ingest_meter(self, payload: MeterDataIn) -> dict[str, Any]:
         if payload.meter_id not in self.registry.meter_ids:
             raise ValueError(f"Compteur inconnu: {payload.meter_id}")
+        ts = parse_ts(payload.timestamp)
+        payload = MeterDataIn(
+            timestamp=ts,
+            meter_id=payload.meter_id,
+            volume=payload.volume,
+            flow_rate=payload.flow_rate,
+        )
         self.meter_data.append(payload)
         meter_data_id = self.sqlite.insert_meter_data(payload)
-        result = self._process_meter_ml(payload)
+        self._recalculate_meter_flows_after(payload.meter_id, ts)
+        row = self.sqlite.get_meter_data_row(meter_data_id)
+        if row:
+            payload = MeterDataIn(
+                timestamp=ts,
+                meter_id=payload.meter_id,
+                volume=float(row["volume"]),
+                flow_rate=float(row["flow_rate"] or 0.0),
+            )
+        result = self._apply_ml_for_meter_point(payload)
         result["meter_data_id"] = meter_data_id
         return result
 
     def score_meter_reading(self, payload: MeterDataIn) -> dict[str, Any]:
         if payload.meter_id not in self.registry.meter_ids:
             raise ValueError(f"Compteur inconnu: {payload.meter_id}")
-        return self._process_meter_ml(payload)
+        return self._apply_ml_for_meter_point(payload)
 
     def ingest_pressure(self, payload: PressureDataIn) -> dict[str, Any]:
         self.pressure_data.append(payload)
@@ -499,9 +592,9 @@ class InMemoryStore:
         if payload.meter_id not in self.registry.meter_ids:
             raise ValueError(f"Compteur inconnu: {payload.meter_id}")
         now = datetime.now(timezone.utc).isoformat()
-        ts = payload.timestamp if payload.timestamp.tzinfo else payload.timestamp.replace(tzinfo=timezone.utc)
+        ts = parse_ts(payload.timestamp)
         previous = self.sqlite.get_previous_meter_index(payload.meter_id, ts.isoformat())
-        flow_rate = _flow_rate_from_index(payload.volume, ts, previous)
+        flow_rate = flow_rate_from_index(payload.volume, ts, previous)
         meter_payload = MeterDataIn(
             timestamp=ts,
             meter_id=payload.meter_id,
@@ -534,14 +627,15 @@ class InMemoryStore:
         ts_raw = payload.timestamp.isoformat() if payload.timestamp else current["timestamp"]
         volume = float(payload.volume if payload.volume is not None else current["volume"])
         notes = payload.notes if payload.notes is not None else (current.get("notes") or "")
-        ts = _parse_ts(ts_raw)
+        ts = parse_ts(ts_raw)
+        old_ts = parse_ts(current["timestamp"])
         meter_data_id = current.get("meter_data_id")
         previous = self.sqlite.get_previous_meter_index(
             meter_id,
             ts.isoformat(),
             exclude_row_id=int(meter_data_id) if meter_data_id else None,
         )
-        flow_rate = _flow_rate_from_index(volume, ts, previous)
+        flow_rate = flow_rate_from_index(volume, ts, previous)
 
         meter_payload = MeterDataIn(
             timestamp=ts,
@@ -554,7 +648,17 @@ class InMemoryStore:
         else:
             meter_data_id = self.sqlite.insert_meter_data(meter_payload)
 
-        ml_result = self.score_meter_reading(meter_payload)
+        recalc_from = min(old_ts, ts)
+        self._recalculate_meter_flows_after(meter_id, recalc_from)
+        row = self.sqlite.get_meter_data_row(int(meter_data_id))
+        if row:
+            meter_payload = MeterDataIn(
+                timestamp=parse_ts(row["timestamp"]),
+                meter_id=meter_id,
+                volume=float(row["volume"]),
+                flow_rate=float(row["flow_rate"] or 0.0),
+            )
+        ml_result = self._apply_ml_for_meter_point(meter_payload)
         updated_at = datetime.now(timezone.utc).isoformat()
         self.sqlite.update_manual_reading(
             reading_id=reading_id,
@@ -574,8 +678,13 @@ class InMemoryStore:
         if not row:
             raise ValueError("Releve introuvable")
         meter_data_id = row.get("meter_data_id")
+        meter_id = str(row.get("meter_id") or "")
+        deleted_ts = parse_ts(row["timestamp"]) if row.get("timestamp") else None
         if meter_data_id:
             self.sqlite.delete_meter_data(int(meter_data_id))
+        if meter_id and deleted_ts is not None:
+            self._recalculate_meter_flows_after(meter_id, deleted_ts)
+            self._rescore_latest_meter_point(meter_id)
         return {"deleted": row}
 
     def get_network_topology(self) -> dict[str, Any]:

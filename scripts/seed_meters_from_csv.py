@@ -179,31 +179,22 @@ def seed_from_csv(csv_path: Path, reset: bool, max_points: int) -> dict[str, int
         if max_points and inserted >= max_points:
             break
 
-    # ML uniforme sur les 12 derniers points par compteur (dates CSV conservees)
+    # ML : meme pipeline que les nouveaux releves (historique + dernier point)
     ml_scored = 0
     for meter_id in NETWORK_METER_IDS:
-        rows = store.sqlite._fetchall(
-            """
-            SELECT timestamp, flow_rate
-            FROM meter_data
-            WHERE meter_id = ?
-            ORDER BY timestamp ASC
-            """,
-            (meter_id,),
-        )
-        if len(rows) < 2:
+        history = store.sqlite.get_meter_flow_history(meter_id, limit=1)
+        if not history:
             continue
-        tail = rows[-12:]
-        for row in tail:
-            payload = MeterDataIn(
-                timestamp=datetime.fromisoformat(str(row["timestamp"]).replace("Z", "+00:00")),
-                meter_id=meter_id,
-                volume=0.0,
-                flow_rate=float(row["flow_rate"] or 0.0),
-            )
-            store.score_meter_reading(payload)
-            ml_scored += 1
-    print(f"[info] scores ML calcules: {ml_scored}")
+        last = history[-1]
+        payload = MeterDataIn(
+            timestamp=datetime.fromisoformat(str(last["timestamp"]).replace("Z", "+00:00")),
+            meter_id=meter_id,
+            volume=float(last.get("volume") or 0.0),
+            flow_rate=float(last["flow_rate"] or 0.0),
+        )
+        store._apply_ml_for_meter_point(payload)
+        ml_scored += 1
+    print(f"[info] compteurs scores ML (dernier releve): {ml_scored}")
 
     per_meter = store.sqlite._fetchall(
         f"""

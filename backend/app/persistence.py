@@ -157,6 +157,169 @@ class SQLiteStore:
     def delete_meter_data(self, row_id: int) -> None:
         self._execute_commit("DELETE FROM meter_data WHERE id = ?", (row_id,))
 
+    def get_meter_data_row(self, row_id: int) -> dict[str, Any] | None:
+        row = self._fetchone(
+            """
+            SELECT id, timestamp, meter_id, volume, flow_rate
+            FROM meter_data WHERE id = ?
+            """,
+            (row_id,),
+        )
+        return dict(row) if row else None
+
+    def list_meter_data_chronological(self, meter_id: str) -> list[dict[str, Any]]:
+        rows = self._fetchall(
+            """
+            SELECT id, timestamp, meter_id, volume, flow_rate
+            FROM meter_data
+            WHERE meter_id = ?
+            ORDER BY datetime(timestamp) ASC, id ASC
+            """,
+            (meter_id,),
+        )
+        return [dict(r) for r in rows]
+
+    def update_meter_data_flow(self, row_id: int, flow_rate: float) -> None:
+        self._execute_commit(
+            "UPDATE meter_data SET flow_rate = ? WHERE id = ?",
+            (flow_rate, row_id),
+        )
+
+    def get_meter_flow_history_before(
+        self,
+        meter_id: str,
+        before_timestamp: str,
+        limit: int = 200,
+        exclude_row_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Derniers releves strictement anterieurs a before_timestamp (ordre chronologique)."""
+        params: list[Any] = [meter_id, before_timestamp]
+        exclude_sql = ""
+        if exclude_row_id is not None:
+            exclude_sql = " AND id != ?"
+            params.append(exclude_row_id)
+        params.append(max(1, int(limit)))
+        rows = self._fetchall(
+            f"""
+            SELECT id, timestamp, volume, flow_rate
+            FROM (
+                SELECT id, timestamp, volume, flow_rate
+                FROM meter_data
+                WHERE meter_id = ? AND datetime(timestamp) < datetime(?)
+                {exclude_sql}
+                ORDER BY datetime(timestamp) DESC, id DESC
+                LIMIT ?
+            )
+            ORDER BY datetime(timestamp) ASC, id ASC
+            """,
+            tuple(params),
+        )
+        return [dict(r) for r in rows]
+
+    def get_meter_data_at_timestamp(self, meter_id: str, timestamp: str) -> dict[str, Any] | None:
+        row = self._fetchone(
+            """
+            SELECT id, timestamp, meter_id, volume, flow_rate
+            FROM meter_data
+            WHERE meter_id = ? AND timestamp = ?
+            LIMIT 1
+            """,
+            (meter_id, timestamp),
+        )
+        if row:
+            return dict(row)
+        row = self._fetchone(
+            """
+            SELECT id, timestamp, meter_id, volume, flow_rate
+            FROM meter_data
+            WHERE meter_id = ? AND datetime(timestamp) = datetime(?)
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (meter_id, timestamp),
+        )
+        return dict(row) if row else None
+
+    def list_zero_ml_anomalies(self, limit: int = 500) -> list[dict[str, Any]]:
+        rows = self._fetchall(
+            """
+            SELECT timestamp, meter_id, score, leak_probability
+            FROM anomalies
+            WHERE score = 0 AND leak_probability = 0
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (max(1, int(limit)),),
+        )
+        return [dict(r) for r in rows]
+
+    def list_manual_readings_for_ml(self) -> list[dict[str, Any]]:
+        rows = self._fetchall(
+            """
+            SELECT id, timestamp, meter_id, volume, flow_rate, meter_data_id
+            FROM manual_meter_readings
+            ORDER BY meter_id ASC, datetime(timestamp) ASC, id ASC
+            """
+        )
+        return [dict(r) for r in rows]
+
+    def upsert_ml_alert(self, item: Alert) -> None:
+        """Une alerte ML active par compteur et horodatage."""
+        ts = item.timestamp.isoformat()
+        with self._lock:
+            self._conn.execute(
+                """
+                DELETE FROM alerts
+                WHERE source_id = ? AND timestamp = ?
+                  AND category IN ('anomaly', 'leak_suspected')
+                """,
+                (item.source_id, ts),
+            )
+            self._conn.execute(
+                """
+                INSERT INTO alerts(timestamp, severity, category, source_id, message)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    ts,
+                    item.severity,
+                    item.category,
+                    item.source_id,
+                    item.message,
+                ),
+            )
+            self._conn.commit()
+
+    def get_meter_flow_history(
+        self,
+        meter_id: str,
+        limit: int = 200,
+        exclude_row_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Derniers releves chronologiques (fenetre glissante) pour le ML."""
+        params: list[Any] = [meter_id]
+        exclude_sql = ""
+        if exclude_row_id is not None:
+            exclude_sql = " AND id != ?"
+            params.append(exclude_row_id)
+        params.append(max(1, int(limit)))
+        rows = self._fetchall(
+            f"""
+            SELECT id, timestamp, volume, flow_rate
+            FROM (
+                SELECT id, timestamp, volume, flow_rate
+                FROM meter_data
+                WHERE meter_id = ?
+                {exclude_sql}
+                ORDER BY datetime(timestamp) DESC, id DESC
+                LIMIT ?
+            )
+            ORDER BY datetime(timestamp) ASC, id ASC
+            """,
+            tuple(params),
+        )
+        return [dict(r) for r in rows]
+
     def get_previous_meter_index(
         self,
         meter_id: str,
@@ -199,19 +362,80 @@ class SQLiteStore:
             ),
         )
 
+    def delete_orphan_anomalies(self) -> int:
+        """Supprime anomalies sans releve meter_data correspondant."""
+        with self._lock:
+            cur = self._conn.execute(
+                """
+                DELETE FROM anomalies
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM meter_data md
+                    WHERE md.meter_id = anomalies.meter_id
+                      AND datetime(md.timestamp) = datetime(anomalies.timestamp)
+                )
+                """
+            )
+            self._conn.commit()
+        return int(cur.rowcount)
+
+    def upsert_anomaly(self, item: Anomaly) -> None:
+        """Un seul enregistrement ML par compteur et horodatage de releve."""
+        ts = item.timestamp.isoformat()
+        with self._lock:
+            self._conn.execute(
+                """
+                DELETE FROM anomalies
+                WHERE meter_id = ? AND datetime(timestamp) = datetime(?)
+                """,
+                (item.meter_id, ts),
+            )
+            self._conn.execute(
+                """
+                INSERT INTO anomalies(timestamp, meter_id, score, leak_probability)
+                VALUES (?, ?, ?, ?)
+                """,
+                (ts, item.meter_id, item.score, item.leak_probability),
+            )
+            self._conn.commit()
+
     def insert_anomaly(self, item: Anomaly) -> None:
-        self._execute_commit(
-            """
-            INSERT INTO anomalies(timestamp, meter_id, score, leak_probability)
-            VALUES (?, ?, ?, ?)
-            """,
-            (
-                item.timestamp.isoformat(),
-                item.meter_id,
-                item.score,
-                item.leak_probability,
-            ),
-        )
+        self.upsert_anomaly(item)
+
+    def dedupe_anomalies(self) -> int:
+        """Garde une seule anomalie par (compteur, horodatage)."""
+        with self._lock:
+            cur = self._conn.execute(
+                """
+                DELETE FROM anomalies
+                WHERE id NOT IN (
+                    SELECT MAX(id)
+                    FROM anomalies
+                    GROUP BY meter_id, timestamp
+                )
+                """
+            )
+            self._conn.commit()
+        return int(cur.rowcount)
+
+    def cleanup_ml_warmup_duplicates(self) -> dict[str, int]:
+        """Supprime alertes « levee legere » et anomalies en double (warmup / rejeu historique)."""
+        with self._lock:
+            cur_alerts = self._conn.execute(
+                """
+                DELETE FROM alerts
+                WHERE message LIKE 'Leve legere%'
+                   OR message LIKE 'Levée légère%'
+                   OR message LIKE 'Levee legere%'
+                """
+            )
+            removed = self.dedupe_anomalies()
+            orphans = self.delete_orphan_anomalies()
+            self._conn.commit()
+        return {
+            "alerts_removed": int(cur_alerts.rowcount),
+            "anomalies_removed": removed,
+            "orphan_anomalies_removed": orphans,
+        }
 
     def insert_alert(self, item: Alert) -> None:
         self._execute_commit(
