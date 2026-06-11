@@ -7,6 +7,7 @@ import { DashboardCapteursPage } from "./pages/DashboardCapteursPage";
 import { DashboardCompteursPage } from "./pages/DashboardCompteursPage";
 import { DashboardDetectionPage } from "./pages/DashboardDetectionPage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { DashboardResultatsPage } from "./pages/DashboardResultatsPage";
 import { MapPage } from "./pages/MapPage";
 import { RelevesPage } from "./pages/RelevesPage";
 import { AdminAlertsPage } from "./pages/admin/AdminAlertsPage";
@@ -23,6 +24,7 @@ const Releves = withAppLayout(RelevesPage);
 const Capteurs = withAppLayout(DashboardCapteursPage);
 const Alertes = withAppLayout(DashboardAlertesPage);
 const Detection = withAppLayout(DashboardDetectionPage);
+const Resultats = withAppLayout(DashboardResultatsPage);
 const Cartographie = withAppLayout(MapPage);
 
 export default function App() {
@@ -46,6 +48,7 @@ export default function App() {
         <Route path="/dashboard/capteurs" element={<Capteurs />} />
         <Route path="/dashboard/alertes" element={<Alertes />} />
         <Route path="/dashboard/detection" element={<Detection />} />
+        <Route path="/dashboard/resultats" element={<Resultats />} />
         <Route path="/cartographie" element={<Cartographie />} />
 
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

@@ -24,6 +24,9 @@ export function AppLayout({ children }) {
           <NavLink to="/dashboard/capteurs" className={({ isActive }) => (isActive ? "active" : "")}>
             Capteurs pression
           </NavLink>
+          <NavLink to="/dashboard/resultats" className={({ isActive }) => (isActive ? "active" : "")}>
+            Resultats localisation
+          </NavLink>
           <NavLink to="/dashboard/alertes" className={({ isActive }) => (isActive ? "active" : "")}>
             Alertes
           </NavLink>
